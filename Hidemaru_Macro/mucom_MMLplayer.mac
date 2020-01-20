@@ -1,0 +1,1037 @@
+
+//-------------------------------------------------------------------
+// マクロ名: mucom_MMLplayer.mac
+// 機能    ：MMLファイル上でコマンドライン版MUCOM88の制御を行う
+// 製作者  ：@overgo
+// 導入方法：
+//      ①公式サイトからMUCOM88 Windowsをダウンロード。 https://onitama.tv/mucom88/
+//      ②ダウンロードしたzipファイルを任意の場所に展開する。
+//      ③本マクロの$MUCOM88_Dirにmucom88.exeのあるフォルダパスを記述。
+//      ④演奏用のMUCOM88向けMMLファイル（*.muc）を自作するなどして用意する。
+//
+// 使用方法：
+//      演奏：①MMLファイル上で本マクロを実行。
+//            ②演奏が終了したら（あるいは中断する場合）、[Ctrl + C] でDOS窓を閉じる。
+//
+//            編集中、または新規作成中ファイルでも可。
+//
+//      WAV出力：①既存のMMLファイルに拡張タグ #time を記述。（演奏は省略される）
+//               ②MMLファイル上で本マクロを実行。
+//
+//               #time 60 のようにパラメータを記述すればデフォルト値を設定可能。
+//               新規作成の場合はWAV出力できないので、先にファイル保存が必要。
+//
+//      ミュート機能：①MMLファイルに拡張タグ #mute を記述。
+//                    ②演奏またはWAV出力を実行する。
+//
+//                    テンポを記述したトラックをミュートした場合でも、最初に記述され
+//                    ているテンポで演奏される。（テンポチェンジには未対応）
+//                    パラメータとして演奏するトラック名を記述することで、未記述の
+//                    トラックをミュートさせることが可能。（例： #mute ABC ）
+//
+// 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
+// 更新履歴 : 2019/11/29(金) 14:41:08 Ver 1.00 初版作成。
+//-------------------------------------------------------------------
+
+	//==================================================
+	// 【ユーザ設定項目】
+	// mucom88.exeのあるフォルダ（※「\」は「\\」と記述）
+	$MUCOM88_Dir = "C:\\_userApp\\mucom88";
+
+	// 一時MMLファイル名
+	$TmpMucName = "_tmp.muc";
+
+	// 一時バイナリファイル名
+	$BinName = "_tmp.mub";
+
+
+	// [拡張タグ]WAVファイル出力モード
+	$Tag_WavOut = "#time";
+
+	// [拡張タグ]ミュート設定
+	$Tag_Mute = "#mute";
+
+	// メッセージおよびデバッグ用のマクロ名
+	$MacName = "mucom_MMLplayer.mac";
+
+	//==================================================
+	call _DEBUG "==========【マクロ開始】==========";
+
+	//------------------------------
+	// コンパイルの準備（初期処理）
+	//------------------------------
+
+	// タグ検索結果の行位置をリセット
+	#FoundLineNo = 0;
+
+	// MMLファイルまたは新規作成以外は実行しない
+	if( ( ".muc" != filetype )&&( ".MUC" != filetype )&&("new" != filetype) )
+	{
+		$ErrMsg = "MUCOM88用MMLファイル（*.muc）で実行してください。";
+		call _DEBUG "【エラー】初期処理：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		goto END;
+	}
+
+	// 実行ファイルのパスを作成
+	$AppName = "mucom88.exe";
+	$Chk = rightstr( $MUCOM88_Dir, 1 );
+	if( "\\" != $Chk ) $MUCOM88_Dir = $MUCOM88_Dir + "\\";
+	$AppPath = $MUCOM88_Dir + $AppName;
+
+	// 実行ファイルの存在チェック
+	#Ret = existfile( $AppPath );
+	if( false == #Ret )
+	{
+		$ErrMsg = "\"" + $AppPath + "\" が存在しません。（$MUCOM88_Dir の記述を確認してください）";
+		call _DEBUG "【エラー】初期処理：実行ファイルパスなし：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		goto END;
+	}
+
+	// カーソルの現在位置を保存
+	#Cr_X = x;
+	#Cr_Y = y;
+
+	// ファイル内のテキストを丸コピー
+	gofiletop;
+	#Top_X = x;
+	#Top_Y = y;
+	gofileend;
+	#End_X = x;
+	#End_Y = y;
+	$MML_Txt = gettext( #Top_X, #Top_Y, #End_X, #End_Y );
+
+	// カーソルを復帰
+	moveto #Cr_X, #Cr_Y;
+
+	// MMLファイル名からファイル名のベースを作成（新規作成であれば長さ０）
+	$BaseName = leftstr( basename2, strlen( basename2 ) - strlen( filetype ) );
+
+	// ミュートタグチェック
+	call _DEBUG "拡張タグチェック：$Tag_Mute=" + $Tag_Mute;
+	$Opt_Mute = "";
+	call _GetMmlTag $Tag_Mute, linecount2;
+	$TagSts_Mute = $$return;
+	if( 0 < strlen($TagSts_Mute) )
+	{
+		// タグの再編集用に検出した位置を記憶しておく
+		#MuteTagLNo = #FoundLineNo;
+	}
+
+	// WAV出力タグチェック
+	call _DEBUG "拡張タグチェック：$Tag_WavOut=" + $Tag_WavOut;
+	$Opt_WavOut = "";
+	call _GetMmlTag $Tag_WavOut, linecount2;
+	$TagSts_WavOut = $$return;
+
+	// WAV出力が有効であれば、演奏処理は実行しない（排他制御）
+	if( 0 < strlen($TagSts_WavOut) )
+	{
+		// タグの再編集用に検出した位置を記憶しておく
+		#WavTagLNo = #FoundLineNo;
+
+		call _DEBUG "WAV出力：タグ\"" + $Tag_WavOut + "\" を検出。$TagSts_WavOut=" + $TagSts_WavOut;
+		//----------------------------------------
+		// WAV出力の準備処理
+		//----------------------------------------
+
+		// WAV出力が有効でも、新規作成の場合は実行しない
+		if( 0 == strlen( $BaseName ) )
+		{
+			// WAV出力は演奏との排他処理になので、この場合はマクロ終了とする。
+			$ErrMsg = "新規作成の場合、WAVファイル出力は実行できません。（ファイルの保存を行ってください）";
+			call _DEBUG "【エラー】WAV出力：" + $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			goto END;
+		}
+
+
+		// WAV出力タグのパラメータ値が記述されている場合は取得
+		#WavLenVal = 0;
+		if( " " != $TagSts_WavOut )
+		{
+			// とりあえず数値に変換して範囲チェック
+			#WavLenVal = val( $TagSts_WavOut );
+			if( #WavLenVal < 0 )
+			{
+				#WavLenVal = 0;
+			}
+			else if( 9999 < #WavLenVal )
+			{
+				#WavLenVal = 9999;
+			}
+		}
+		else
+		{
+			// デフォルトは90秒
+			#WavLenVal = 90;
+		}
+
+		beep;
+		call _DEBUG "WAV出力：ユーザ入力開始";
+
+		// 作成するWAVファイル名
+		$WavName = $BaseName + ".wav";
+
+		// 入力メニューの表示
+		call _DspSetTime "【録音時間の設定】" + $WavName, 0, 9999, #WavLenVal;
+		$WavTimeStr = $$return;
+		if( 0 < strlen( $WavTimeStr ) )
+		{
+			// WAV出力用のコマンドラインオプションを作成
+			$Opt_WavOut = "-x -w " + $WavName + " -l " + $WavTimeStr + " ";
+			call _DEBUG "WAV出力：録音時間確定 $Opt_WavOut=\"" + $Opt_WavOut + "\"";
+		}
+		else
+		{
+			call _DEBUG "WAV出力：ユーザによるキャンセル（処理中止）";
+			goto END;
+		}
+	}
+
+	//------------------------------
+	//  ミュートオプション処理
+	//------------------------------
+	// ミュートオプションが有効であれば、設定メニューを表示
+	if( 0 != strlen($TagSts_Mute) )
+	{
+		call _DEBUG "ミュートオプション：タグ\"" + $Tag_Mute + "\" を検出。";
+		#Ret = 2; //セパレータの値
+		call _MuteDspChg -1; // ミュート表示のリセット
+
+		// ミュートタグのパラメータ値が記述されている場合は選択状態に反映する
+		if( " " != $TagSts_Mute )
+		{
+			call _DEBUG "ミュート：タグ\"" + $Tag_Mute + "\" を検出。$TagSts_Mute=" + $TagSts_Mute;
+
+			// トラック名が記述されていなければミュートON
+			#k = 0;
+			while( #k < 11 )
+			{
+				$TrName = midstr( "ABCDEFGHIJK", #k, 1 );
+				if( 0 > strstr( $TagSts_Mute, $TrName ) )
+				{
+					// 表示を反転（ミュート）
+					call _MuteDspChg #k;
+				}
+
+				#k = #k + 1;
+			}
+		}
+
+		// WAV出力秒数のユーザ入力メニューを表示（ループ処理）
+		while((1 < #Ret)&&(#Ret < 15) )
+		{
+			call _Sec2TimeSub #InpVal;
+			$DspTime = $$return;
+
+			menu
+				"【ミュートの設定】",
+				"\x01",
+				$DspMuteF[0]  + "(&A)　" + " [ FM1 ] ",
+				$DspMuteF[1]  + "(&B)　" + " [ FM2 ] ",
+				$DspMuteF[2]  + "(&C)　" + " [ FM3 ] ",
+				$DspMuteF[3]  + "(&D)　" + " [SSG-1] ",
+				$DspMuteF[4]  + "(&E)　" + " [SSG-2] ",
+				$DspMuteF[5]  + "(&F)　" + " [SSG-3] ",
+				$DspMuteF[6]  + "(&G)　" + " [RtmTR] ",
+				$DspMuteF[7]  + "(&H)　" + " [ FM4 ] ",
+				$DspMuteF[8]  + "(&I)　" + " [ FM5 ] ",
+				$DspMuteF[9]  + "(&J)　" + " [ FM6 ] ",
+				$DspMuteF[10] + "(&K)　" + " [ADPCM] ",
+				"リセット(&R) ",
+				"決定(&O)",
+				"キャンセル(&X)"; // #Ret = 16
+
+			#Ret = result;
+			if( (3 <= #Ret)&&(#Ret <= 13) )
+			{
+				// Shiftキーを押しながらの場合はソロ指定
+				if( iskeydown( 0x10 ) ) call _MuteDspChg -10; // いったん全ミュートする
+
+				// ミュートフラグのトグル動作
+				call _MuteDspChg (#Ret - 3);
+			}
+			else if( 14 == #Ret )
+			{
+				// (R)リセット
+				call _MuteDspChg -1;
+			}
+			else if( 16 == #Ret )
+			{
+				// (X)キャンセル
+				#Ret = 0; // ZEROで上書き
+				$TagSts_Mute = "";
+				call _DEBUG "ミュートオプション：ユーザによるキャンセル（処理続行）";
+			}
+		}
+
+		/* 「決定」の場合は一括置換用の検索ワードを作成 */
+		$MuteEditStr = "";
+		if( (1 == #Ret)||(15 == #Ret) )
+		{
+			$RepKey = "";
+			#i = 0;
+			while( #i < 11 )
+			{
+				// ミュート状態を反映
+				$TrName = midstr( "ABCDEFGHIJK", #i, 1 );
+				if( "●" != $DspMuteF[#i] )
+				{
+					// ミュート（コメントアウト）するトラックを検索ワードに結合していく
+					$RepKey = $RepKey + "|^" + $TrName +  " ";
+				}
+				else
+				{
+					// ミュートOFFのトラック名をタグ再編集用に結合していく
+					$MuteEditStr = $MuteEditStr + $TrName;
+				}
+
+				#i = #i + 1;
+			}
+
+			// 全ミュートでも strlen > 0 とする
+			$MuteEditStr = $MuteEditStr + " ";
+
+			if( 0 < strlen($RepKey) )
+			{
+				// 検索ワードは最終的に先頭の "|" を無視して1文字後ろから適用
+				$RepKey = "(" + midstr( $RepKey, 1 ) + ")";
+				call _DEBUG "ミュートオプション：検索ワード = \"" + $RepKey + "\"";
+			}
+		}
+	}
+
+	//------------------------------
+	//  コンパイル処理
+	//------------------------------
+
+	// 復帰用にMMLファイルのハンドルを保存
+	#MyHdl = hidemaruhandle( 0 );
+
+	// コンパイル用の一時MMLファイルを作成
+	$TmpMucPath = $MUCOM88_Dir + $TmpMucName;
+	call _DEBUG "[MUCOM88] コンパイル用の一時MMLファイル作成：" + $TmpMucPath;
+
+	// MMLファイルの内容を丸コピー
+	newfile; // ファイルオープン
+	setwindowsize 0,0;
+	insert $MML_Txt;
+
+	// ミュートオプション処理
+	if( 0 < strlen($RepKey) )
+	{
+		// テンポの記述がミュートされた場合の応急処置として、演奏開始時のテンポを取得。
+		// ※テンポチェンジには対応できない
+		call _GetTempo linecount2;
+		$Tempo = $$return;
+		call _DEBUG "[MUCOM88] ミュートオプション処理：$Tempo=" + $Tempo;
+
+		// 高速一括置換でミュートするトラックをコメントアウト
+		disabledraw;                // 「処理中」は表示しない
+		setcompatiblemode 0x20000;  // マクロ終了後に検索条件をリセットする
+
+		// 行番号の削除
+		replaceallfast "^[^']*'", "", regular;
+		// コメントアウト
+		replaceallfast $RepKey, ";\\1", regular;
+		enabledraw;
+
+		// 一時ファイル行頭にテンポ設定を挿入
+		moveto 0,0;
+		insert "G " + $Tempo + "\n";
+	}
+
+	// 一時ファイルを保存し、元のMMLファイルをアクティブにする
+	saveas $TmpMucPath;             // 一時ファイルを上書き保存
+	#NewHdl = hidemaruhandle( 0 );  // ウィンドウハンドルを保存
+	setactivehidemaru #MyHdl;       // MMLファイルに戻る
+	closehidemaru #NewHdl;          // 一時ファイルを閉じる
+	deletefilehist;                 // 一時ファイルの履歴を削除
+
+	// 一時バイナリファイルを削除
+	$BinPath = $MUCOM88_Dir + $BinName;
+	call _DEBUG "[MUCOM88] 一時バイナリファイル削除：" + $BinPath;
+	deletefile $BinPath;
+
+	// 一時MMLをコンパイル
+	$ExcStr = $AppPath + " -o " + $BinPath + " -c " + $TmpMucPath;
+	call _DEBUG "[MUCOM88] コンパイル実行：" + $ExcStr;
+	runex $ExcStr, 1, // ファイル名, 同期フラグ
+			0, "",    // 標準入力フラグ, 標準入力ファイル名
+			7, "",    // 標準出力フラグ, 標準出力ファイル名
+			7, "",    // 標準エラー出力フラグ, 標準エラー出力ファイル名
+			0, "",    // 作業フォルダフラグ, 作業フォルダ名
+			1, 1, 0, 0; // 表示フラグ, 非描画フラグ, エンコード, 拡張フラグ
+	// ※実行結果はアウトプット枠に出力される
+
+
+	// 一時バイナリファイルの存在チェック
+	// ※ウイルス対策ソフトの影響で失敗する可能性もある
+	#Ret = existfile( $BinPath );
+	if( false == #Ret )
+	{
+		$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
+		call _DEBUG "[MUCOM88] 【エラー】一時バイナリファイルなし：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+
+		// エラー情報はアウトプット枠に出ているはずなので、そちらへフォーカスを遷移
+		setfocus 5;
+		goto END;
+	}
+
+	call _DEBUG "[MUCOM88] コンパイルOK。";
+
+
+	//------------------------------
+	// メイン処理
+	//------------------------------
+
+	// WAV出力モードか確認
+	if( 0 == strlen($Opt_WavOut) )
+	{
+		//--------------------
+		// 演奏処理
+		//--------------------
+		// MUCOM88を実行して演奏を開始
+		$ExcStr = $AppPath + " " + "-d " + $BinPath;
+		call _DEBUG "[MUCOM88] 演奏処理実行：" + $ExcStr;
+		#Start_Tk = tickcount;
+		runsync2 $ExcStr; // アイコンの状態にしないで待機(sync2)
+
+		// ユーザがDOS窓を閉じたら経過時間（秒）を算出
+		#End_Tk = tickcount;
+		$Play_Time = str((#End_Tk - #Start_Tk) / 1000);
+		call _DEBUG "[MUCOM88] 演奏処理終了：経過時間 " + $Play_Time + "秒";
+	}
+	else
+	{
+		//--------------------
+		// WAV出力
+		//--------------------
+
+		// WAVファイルのフルパスを作成
+		$WavPath = leftstr( filename2, strlen(filename2) - strlen(basename2) ) + $WavName;
+
+		// 過去に作成したファイルは削除
+		deletefile $WavPath;
+
+		// MUCOM88を実行してWAVファイルを出力（演奏は行われない。）
+		// ※付記：仮に長さ指定 -l を省略した場合は90秒固定の仕様。
+		$ExcStr = $AppPath + " " + $Opt_WavOut + $BinPath;
+		call _DEBUG "[WAV出力モード] 開始：" + $ExcStr;
+		runsync2 $ExcStr; // アイコンの状態で待機(sync)
+
+		// WAVファイルの存在チェック（ウイルス対策ソフトの影響で失敗する可能性もある）
+		#Ret = existfile( $WavName );
+		if( false != #Ret )
+		{
+			beep; // アイコンが「？」だと無音なのでBeep 君はエターナル
+
+			// 秒データからタイムスタンプを作成
+			call _Sec2TimeSub val( $WavTimeStr );
+			$WavTimeStmp = $$return;
+
+			call _DEBUG "[WAV出力モード] WAVファイル出力：" + $WavName + " [" + $WavTimeStmp + "] (" + $WavTimeStr + "秒)";
+
+			// ユーザへの問い合わせ
+			$ErrMsg = "WAVファイル " + $WavName + " [" + $WavTimeStmp + "] (" + $WavTimeStr + "秒) を作成しました。\n"
+					+ "ファイルを開きますか？";
+			#Ret = message( $ErrMsg, $MacName,  (0x20|0x04) ); // (MB_ICONQUESTION | MB_YESNO
+			// 「はい」が選択されたら関連付けで開く
+			if( 6 == #Ret )
+			{
+				call _DEBUG "[WAV出力モード] WAVファイルオープン：" + $WavName;
+				openbyshell $WavName;
+			}
+		}
+		else
+		{
+			$ErrMsg = "\"" + $WavName + "\" の作成に失敗しました。";
+			call _DEBUG "[WAV出力モード] 【エラー】WAV出力：" + $ErrMsg;
+			message $ErrMsg, $MacName, 0x30;
+			goto END;
+		}
+
+		// 開いているファイルが書き込み可能であればWAV出力タグの再編集
+		if( (!readonly)&&(!browsemode) )
+		{
+			call _EditTag $Tag_WavOut, $WavTimeStr, #WavTagLNo;
+		}
+		else
+		{
+			// 書き込み禁止の警告
+			$ErrMsg = "\"" + basename2 + "\" は書き込み禁止です。";
+			call _DEBUG "[WAV出力モード] 【エラー】タグ編集：" + $ErrMsg;
+			message $ErrMsg, $MacName, 0x30;
+		}
+
+		// WAV出力モード終了
+		call _DEBUG "[WAV出力モード] 終了";
+		goto END;
+	}
+
+	// ミュートタグの再編集
+	if( 0 < strlen($MuteEditStr) )
+	{
+		// 開いているファイルが書き込み可能であればWAV出力タグの再編集
+		if( (!readonly)&&(!browsemode) )
+		{
+			call _EditTag $Tag_Mute, $MuteEditStr, #MuteTagLNo;
+		}
+		else
+		{
+			// WAV出力モードでなければ警告（二重警告を回避）
+			if( 0 == strlen($Opt_WavOut) )
+			{
+				// 書き込み禁止の警告
+				$ErrMsg = "\"" + basename2 + "\" は書き込み禁止です。";
+				call _DEBUG "[演奏モード] 【エラー】タグ編集：" + $ErrMsg;
+				message $ErrMsg, $MacName, 0x30;
+			}
+		}
+	}
+
+	END:
+
+	// マクロ終了
+	call _DEBUG "【マクロ終了】";
+
+endmacro;
+//================================================================================
+
+//------------------------------
+// 各サブルーチン
+//------------------------------
+
+//****************************************
+//   MMLタグの検索およびパラメータの取得
+//
+//  call _GetMmlTag $$1, ##2;
+//           $$1 検索するタグ
+//           ##2 最大ループカウント
+//
+// 戻り値：
+//     成功した場合は、パラメータ文字列
+//     パラメータだけ存在しない場合は " "
+//     タグが存在しない場合は空の文字列
+//
+// ※グローバル変数 $MML_Txt, #FoundLineNo
+//****************************************
+_GetMmlTag:
+{
+	$$FindTag = $$1;
+	##LoopMax = ##2;
+
+	$$RetStr  = "";
+	$$SeekChr = "\n"; // 区切り文字
+	##SetPos  = 0;
+	$$LineStr = "";
+	$$RetStr = "";
+
+	##i = 0;
+	while( ##i < ##LoopMax )
+	{
+		// １行ずつ切り出していく
+		##SeekPos = strstr( $MML_Txt, $$SeekChr, ##SetPos );
+		if( 0 <= ##SeekPos )
+		{
+			// １行取得（行末の\n は含めない）
+			$$LineStr = midstr( $MML_Txt, ##SetPos, ##SeekPos - (##SetPos + 1) ); //区切り文字のひとつ後ろまで
+
+			// タグを検索
+			call _FindTag $$LineStr, $$FindTag;
+			if( 0 < strlen( $$return ) )
+			{
+				$$RetStr = $$return;	// 一致したタグを取得
+				#FoundLineNo = ##i;		// 取得位置を保存（タグ再編集用）
+				##i = ##LoopMax;		// ループ脱出
+			}
+		}
+		else
+		{
+			//------------------------------
+			// 改行が見つからない場合
+			//------------------------------
+			// 最後の行
+			$$LineStr = midstr( $MML_Txt, ##SetPos );
+
+			// タグを検索
+			call _FindTag $$LineStr, $$FindTag;
+			if( 0 < strlen( $$return ) )
+			{
+				$$RetStr = $$return;	// 一致したタグを取得
+				#FoundLineNo = ##i;		// 取得位置を保存（タグ再編集用）
+				##i = ##LoopMax;		// 念のため
+			}
+		}
+
+		##SetPos = ##SeekPos + 1; // 次の検索の準備
+		##i = ##i + 1;
+	}
+
+	// 目的のタグを検出済みであれば、パラメータを取得
+	if( 0 < strlen( $$RetStr ) )
+	{
+		$$RetStr = midstr( $$RetStr, strlen( $$FindTag ) );
+
+		// 前後の余白を削除
+		call _TrmSub $$RetStr;
+		$$RetStr = $$return;
+
+		// タグが存在しつつパラメータは存在しない場合、半角スペースを返す
+		if( 0 == strlen( $$RetStr ) ) $$RetStr= " ";
+	}
+
+	return( $$RetStr );
+}
+
+//****************************************
+//   文字列からタグ検索
+//
+//  call _FindTag $$1, $$2
+//           $$1 検索元の文字列
+//           $$2 検索するタグ
+//
+//  戻り値：
+//      成功した場合はコマンドを含めた後続の数字文字列
+//      検索文字が存在しない場合は空の文字列
+//****************************************
+_FindTag:
+{
+	$$SrcStr = $$1;  // 検索元の文字列
+	$$TagStr = $$2;  // 検索するタグ
+	$$RetStr = "";
+
+	// コメント部分の切り捨て
+	##ComtPos = strstr( $$SrcStr, ";" );
+	if( 0 <= ##ComtPos ) $$SrcStr = midstr( $$SrcStr, 0, ##ComtPos );
+
+	// タグを検索
+	##FindPos = strstr( $$SrcStr, $$TagStr );
+	if( 0 <= ##FindPos )
+	{
+		// 一致した文字列と後続の数字を取得
+		$$RetStr = midstr( $$SrcStr, ##FindPos );
+	}
+
+	return $$RetStr;
+}
+
+//****************************************
+// 時間設定のメニューを表示
+//
+//  call _DspSetTime $$1, ##2, ##3, ##4;
+//           $$1 キャプション
+//           ##2 最小値
+//           ##3 最大値
+//           ##4 初期値
+//
+// 戻り値：
+//     確定した時間（秒）の文字列
+//     （キャンセルなら空欄）
+//****************************************
+_DspSetTime:
+{
+	$$CapStr = $$1; // キャプション
+	##MinSec = ##2; // 最小値
+	##MaxSec = ##3; // 最大値
+	##DefVal = ##4;	// 初期値
+	##MnRet = 2;	// メニューの結果（セパレータの値をセット）
+	$$RetStr = "";	// 戻り値
+
+	// 入力中の秒数に初期値をセット
+	##InpVal = ##DefVal;
+
+	// WAV出力秒数のユーザ入力メニューを表示（ループ処理）
+	while((1 < ##MnRet)&&(##MnRet < 6) )
+	{
+		call _Sec2TimeSub ##InpVal;
+		$$DspTime = $$return;
+
+		menu
+			$$CapStr + " [" + $$DspTime +"] (" + str(##InpVal) + "秒)",
+			"\x01",
+			"&> : 1秒増やす ｜ Shift+ > : 10秒増やす",
+			"&< : 1秒減らす ｜ Shift+ < : 10秒減らす",
+			"リセット(&R)",
+			"決定(&O)",
+			"キャンセル(&X)"; // ##MnRet = 7
+
+		##MnRet = result;
+		if( 3 == ##MnRet )
+		{
+			// (>)加算
+			if( iskeydown( 0x10 ) ) ##InpVal = ##InpVal + 10;
+			else ##InpVal = ##InpVal + 1;
+			if(9999 < ##InpVal) ##InpVal = 9999;
+		}
+		else if( 4 == ##MnRet )
+		{
+			// (<)減算
+			if( iskeydown( 0x10 ) ) ##InpVal = ##InpVal - 10;
+			else ##InpVal = ##InpVal - 1;
+			if(0 > ##InpVal) ##InpVal = 0;
+		}
+		else if( 5 == ##MnRet )
+		{
+			// (R)リセット
+			##InpVal = ##DefVal;
+		}
+		else if( (1 == ##MnRet)||(6 == ##MnRet) )
+		{
+			// (O)決定
+			$$RetStr = str( ##InpVal );
+		}
+		else if( 7 == ##MnRet)
+		{
+			// (X)キャンセル
+			##MnRet = 0; // ZEROで上書き
+		}
+	}
+
+	return $$RetStr;
+}
+
+//****************************************
+// テキスト上でタグの編集（未保存）
+//
+//  call _EditTag $$1, $$2;
+//           $$1 対象のタグ
+//           $$2 設定するパラメータ
+//           ##3 編集行（1行目が0）
+//
+// 戻り値：
+//     なし
+//****************************************
+_EditTag:
+{
+	$$TagName = $$1;
+	$$SetParm = $$2;
+	##LineNo  = ##3;
+
+	// タグを検出した位置へ移動
+	moveto2 0,##LineNo + 1;
+	$$TagLine = gettext2( 0,##LineNo + 1, linelen2,##LineNo + 1 );
+
+	// コメントチェック
+	#EndPos = strstr( $$TagLine, ";" );
+	if( 0 <= #EndPos )
+	{
+		// タグの終端はコメントの手前までとする
+		$SepStr = " "; // 間隔を空ける
+	}
+	else
+	{
+		// コメントがなければ行末までタグ扱い
+		#EndPos = linelen2;
+		$SepStr = ""; // 間隔なし
+	}
+
+	// タグのパラメータを設定値で上書き（保存はしない）
+	beginsel;
+	moveto2 #EndPos,##LineNo + 1;
+	endsel;
+	$$InsTxt = $$TagName + " " + $$SetParm + $SepStr;
+	insert $$InsTxt;
+	call _DEBUG "[_EditTag] タグ編集：$$InsTxt=" + $$InsTxt + " (" + str(##LineNo + 1) + "行目)";
+
+	return;
+}
+
+//****************************************
+// 前後の余白を削除
+//
+//  call _TrmSub $$1;
+//           $$1 前後に余白がある文字列
+//
+// 戻り値：
+//     前後の余白を削除後の文字列
+//****************************************
+_TrmSub:
+{
+	$RetStr = $$1;
+
+	// 前方（左）の余白を削除
+	call _LTrmSub( $RetStr );
+	$RetStr = $$return;
+
+	// 後方（右）の余白を削除
+	call _RTrmSub( $RetStr );
+	$RetStr = $$return;      // 返値を取得
+
+	// 余白を削除後の文字列を返して終了
+	return( $RetStr );
+}
+
+//****************************************
+// 前方（左）の余白を削除
+//
+//  call _LTrmSub $$1;
+//           $$1 左に余白がある文字列
+//
+// 戻り値：
+//     前方の余白を削除後の文字列
+//****************************************
+_LTrmSub:
+{
+	$InStr  = $$1; // 入力文字を取得
+	while( ( " " == leftstr( $InStr , 1 ) )&&( 0 != strlen( $InStr ) ) )
+	{
+		$InStr = rightstr( $InStr , strlen( $InStr ) - 1 );
+	}
+
+	return( $InStr );
+}
+
+// ****************************************
+// 後方（右）の余白を削除
+//
+//  call _RTrmSub $$1;
+//           $$1 右に余白がある文字列
+//
+// 戻り値：
+//     後方の余白を削除後の文字列
+// ****************************************
+_RTrmSub:
+{
+	$InStr  = $$1; // 入力文字を取得
+	while( ( " " == rightstr( $InStr , 1 ) )&&( 0 != strlen( $InStr ) ) )
+	{
+		$InStr = leftstr( $InStr , strlen( $InStr ) - 1 );
+	}
+
+	return( $InStr );
+}
+
+// ****************************************
+// 秒データからタイムスタンプに変換
+//
+//  call _Sec2TimeSub ##1;
+//           ##1 秒単位のデータ
+//
+// 戻り値：
+//     hh:mm:nn 形式の文字列
+// ****************************************
+_Sec2TimeSub:
+{
+	##SrcSec = ##1;
+
+	##Hour = ##SrcSec / (60 * 60);
+	##Min = (##SrcSec - (##Hour * 60 * 60)) / 60;
+	##Sec = ##SrcSec - (##Hour * 60 * 60) - (##Min * 60);
+
+	$TimeStr = str(##Hour) + ":" + rightstr( "00" + str(##Min), 2 ) + ":" + rightstr( "00" + str(##Sec), 2 );
+	return $TimeStr;
+}
+
+// ****************************************
+// ミュート表示の切り替え操作
+//
+//  call _MuteDspChg ##1;
+//           ##1 対象のトラック（0～10）
+//              ※ -1  リセット（全解除）
+//              ※ -10 全ミュート
+// 戻り値：
+//     なし
+// ****************************************
+_MuteDspChg:
+{
+	##TrIdx = ##1;
+
+	
+	if( ##TrIdx == -1 )
+	{
+		// リセット要求ならオール解除
+		##i = 0;
+		while( ##i < 11 )
+		{
+			$DspMuteF[##i] = "●";
+			##i = ##i + 1;
+		}
+	}
+	else if( ##TrIdx == -10 )
+	{
+		// 全ミュート
+		##i = 0;
+		while( ##i < 11 )
+		{
+			$DspMuteF[##i] = "－";
+			##i = ##i + 1;
+		}
+	}
+	else
+	{
+		// 個別トラックを反転動作
+		if( "●" == $DspMuteF[##TrIdx] ) $DspMuteF[##TrIdx] = "－";
+		else $DspMuteF[##TrIdx] = "●";
+	}
+
+	return;
+}
+
+
+//****************************************
+//   MMLからテンポ設定を取得
+//
+//  call _GetTempo ##1;
+//           ##1 最大ループカウント
+//
+// 戻り値：
+//     成功した場合は "t???" または "T???"
+//     テンポ設定が存在しない場合は空の文字列
+//
+// ※グローバル変数 $MML_Txt, #FoundLineNo は参照専用
+//****************************************
+_GetTempo:
+{
+	##LoopMax = ##1;
+
+	$$RetStr  = "";
+	$$SepChr = "\n"; // 区切り文字
+	##SetPos  = 0;
+	$$LineStr = "";
+
+	##i = 0;
+	while( ##i < ##LoopMax )
+	{
+		// １行ずつ切り出していく
+		##SeekPos = strstr( $MML_Txt, $$SepChr, ##SetPos );
+		if( 0 <= ##SeekPos )
+		{
+			// １行取得
+			$$LineStr = midstr( $MML_Txt, ##SetPos, ##SeekPos - ##SetPos );
+
+			// タグ以外を検索
+			if( "#" != leftstr( $$LineStr, 1 ) )
+			{
+				call _FindTempo $$LineStr;
+				if( 0 < strlen( $$return ) )
+				{
+					// 見つけたらループを脱出
+					$$RetStr = $$return;
+					call _DEBUG "_GetTempo テンポ取得(" + str(##i + 1) + "行目)：$$RetStr=" + $$RetStr;
+					##i = ##LoopMax;
+				}
+			}
+		}
+		else
+		{
+			//------------------------------
+			// 改行が見つからない場合
+			//------------------------------
+			// 最後の行
+			$$LineStr = midstr( $MML_Txt, ##SetPos );
+
+			// タグ以外を検索
+			if( "#" != leftstr( $$LineStr, 1 ) )
+			{
+				call _FindTempo $$LineStr;
+				if( 0 < strlen( $$return ) )
+				{
+					// 見つけたらループを脱出
+					$$RetStr = $$return;
+					call _DEBUG "_GetTempo テンポ取得(" + str(##i + 1) + "行目)：$$RetStr=" + $$RetStr;
+					##i = ##LoopMax;
+				}
+			}
+		}
+
+		##SetPos = ##SeekPos + 1; // 次の検索の準備
+
+		##i = ##i + 1;
+	}
+
+	return( $$RetStr );
+}
+
+//****************************************
+//   文字列からテンポを検索
+//
+//  call _FindTempo $$1
+//           $$1 検索元の文字列
+//
+//  戻り値：
+//      成功した場合はコマンドを含めた後続の数字文字列
+//      検索文字が存在しない場合は空の文字列
+//****************************************
+_FindTempo:
+{
+	$$SrcStr = $$1;  // 検索元の文字列
+	$$FindStr = "";
+	$$RetStr = "";
+
+	// コメント部分の切り捨て
+	##ComtPos = strstr( $$SrcStr, ";" );
+	if( 0 <= ##ComtPos ) $$SrcStr = midstr( $$SrcStr, 0, ##ComtPos );
+
+	// 目的の文字列を検索
+	// Timer-B
+	##FindPos = strstr( $$SrcStr, "t" );
+	if( 0 <= ##FindPos )
+	{
+		// 一致した文字列と後続の数字を取得
+		$$FindStr = midstr( $$SrcStr, ##FindPos );
+	}
+	else
+	{
+		// Tコマンド
+		##FindPos = strstr( $$SrcStr, "T" );
+		if( 0 <= ##FindPos )
+		{
+			// 一致した文字列と後続の数字を取得
+			$$FindStr = midstr( $$SrcStr, ##FindPos );
+		}
+	}
+
+	// t（もしくはT）コマンドの後ろにあると思われる数値を取得
+	if( 0 < strlen($$FindStr) )
+	{
+		$$RetStr = leftstr( $$FindStr, 1 );
+		##i = 0;
+
+		// 取得する数値は3桁以内
+		while( ##i < 3 )
+		{
+			$$Chr = midstr( $$FindStr, ##i + 1, 1 );
+			if( ( "0" <= $$Chr )&&( $$Chr <= "9" ) )
+			{
+				$$RetStr = $$RetStr + $$Chr;
+			}
+			else
+			{
+				// 後ろが数字でなければ「取得失敗」
+				if( 0 == ##i ) $$RetStr = "";
+call _DEBUG "debug _FindTempo $$FindStr=" + $$FindStr;
+				##i = 3; // ループ脱出
+			}
+
+			##i = ##i + 1;
+		}
+	}
+
+	return $$RetStr;
+}
+
+// ****************************************
+// デバッグ情報の出力
+//
+//  call _DEBUG $$1;
+//           $$1 デバッグメッセージ（改行なし）
+//
+// 戻り値：
+//     なし
+// ****************************************
+_DEBUG:
+{
+	debuginfo 2; // 「アウトプット枠にも出力」
+	// [YYYY/MM/DD hh:mm:ss] (macro_filename) message
+	$$Mes = "[" + year + "/" + month + "/" + day + " " + time + "](" + $MacName + ") " + $$1 + "\x0a";
+
+	// OutputDebugStringによるメッセージの送信
+	debuginfo $$Mes;
+	debuginfo 0;
+	return;
+}
+
