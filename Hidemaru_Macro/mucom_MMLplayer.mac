@@ -30,7 +30,7 @@
 //                    トラックをミュートさせることが可能。（例： #mute ABC ）
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
-// 更新履歴 : 2019/11/29(金) 14:41:08 Ver 1.00 初版作成。
+// 更新履歴 : 2020/01/21 Ver 1.01  MUBファイルの再生などの機能を追加
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -64,15 +64,6 @@
 	// タグ検索結果の行位置をリセット
 	#FoundLineNo = 0;
 
-	// MMLファイルまたは新規作成以外は実行しない
-	if( ( ".muc" != filetype )&&( ".MUC" != filetype )&&("new" != filetype) )
-	{
-		$ErrMsg = "MUCOM88用MMLファイル（*.muc）で実行してください。";
-		call _DEBUG "【エラー】初期処理：" + $ErrMsg;
-		message $ErrMsg, $MacName, 0x10;
-		goto END;
-	}
-
 	// 実行ファイルのパスを作成
 	$AppName = "mucom88.exe";
 	$Chk = rightstr( $MUCOM88_Dir, 1 );
@@ -87,6 +78,48 @@
 		call _DEBUG "【エラー】初期処理：実行ファイルパスなし：" + $ErrMsg;
 		message $ErrMsg, $MacName, 0x10;
 		goto END;
+	}
+
+	// ファイルタイプの取得
+	$FileType = filetype;
+	if(( ".mub" == $FileType )||( ".MUB" == $FileType ))
+	{
+		// MUBファイルなら演奏のみ対応する
+		$BinPath = filename2;
+		call _PlayMub;
+		goto END;
+	}
+
+	// 現在の文字コードをチェック
+	#Encode = encode & 0x3F;
+	if( 26 == #Encode )
+	{
+		$ErrMsg = "現在バイナリモードで開いています。MUBファイル以外ではマクロを実行できません。";
+		call _DEBUG "【エラー】初期処理：バイナリモード：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		goto END;
+	}
+
+	// MMLと思わしきファイルまたは新規作成以外は実行しない
+	if(   ( ".muc" != $FileType )
+		&&( ".MUC" != $FileType )
+		&&( ".mml" != $FileType )
+		&&( ".MML" != $FileType )
+		&&( ".txt" != $FileType )
+		&&( ".TXT" != $FileType )
+		&&( "new"  != $FileType ) )
+	{
+		$ErrMsg = "MUCOM88用MMLファイル（*.muc）で実行してください。";
+		call _DEBUG "【エラー】初期処理：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		goto END;
+	}
+
+	// 空のファイルの場合はクリップボードからの貼り付けを試行
+	if( (linecount2 == 1)&&(linelen2 == 0) )
+	{
+		paste;
+		call _EditNewMML;
 	}
 
 	// カーソルの現在位置を保存
@@ -106,7 +139,7 @@
 	moveto #Cr_X, #Cr_Y;
 
 	// MMLファイル名からファイル名のベースを作成（新規作成であれば長さ０）
-	$BaseName = leftstr( basename2, strlen( basename2 ) - strlen( filetype ) );
+	$BaseName = leftstr( basename2, strlen( basename2 ) - strlen( $FileType ) );
 
 	// ミュートタグチェック
 	call _DEBUG "拡張タグチェック：$Tag_Mute=" + $Tag_Mute;
@@ -391,19 +424,8 @@
 	// WAV出力モードか確認
 	if( 0 == strlen($Opt_WavOut) )
 	{
-		//--------------------
-		// 演奏処理
-		//--------------------
-		// MUCOM88を実行して演奏を開始
-		$ExcStr = $AppPath + " " + "-d " + $BinPath;
-		call _DEBUG "[MUCOM88] 演奏処理実行：" + $ExcStr;
-		#Start_Tk = tickcount;
-		runsync2 $ExcStr; // アイコンの状態にしないで待機(sync2)
-
-		// ユーザがDOS窓を閉じたら経過時間（秒）を算出
-		#End_Tk = tickcount;
-		$Play_Time = str((#End_Tk - #Start_Tk) / 1000);
-		call _DEBUG "[MUCOM88] 演奏処理終了：経過時間 " + $Play_Time + "秒";
+		// MUBファイルをMUCOM88で実行して演奏を開始
+		call _PlayMub;
 	}
 	else
 	{
@@ -1003,7 +1025,7 @@ _FindTempo:
 			{
 				// 後ろが数字でなければ「取得失敗」
 				if( 0 == ##i ) $$RetStr = "";
-call _DEBUG "debug _FindTempo $$FindStr=" + $$FindStr;
+				call _DEBUG "debug _FindTempo $$FindStr=" + $$FindStr;
 				##i = 3; // ループ脱出
 			}
 
@@ -1013,6 +1035,116 @@ call _DEBUG "debug _FindTempo $$FindStr=" + $$FindStr;
 
 	return $$RetStr;
 }
+
+
+// ****************************************
+// 新規MMLの補完
+//
+//  call _EditNewMML;
+//
+// 戻り値：
+//     なし
+// ****************************************
+_EditNewMML:
+{
+	call _DEBUG "[MUCOM88] MML新規作成モード";
+
+	// MMLタグの記述がある場合のみ処理する
+	moveto 0,0;
+	searchdown "#MML", nocasesense;
+	if( result < 1 ) return;
+
+
+	// 行頭の空白を削除
+	disabledraw;                // 「処理中」は表示しない
+	setcompatiblemode 0x20000;  // マクロ終了後に検索条件をリセットする
+	replaceallfast "^[ |　]*", "", regular;
+	enabledraw;
+	
+	// １行ずつ補完していく
+	##LineNo = 0;
+	while( ##LineNo < linecount )
+	{
+		// 行頭2文字を取得
+		moveto 0,##LineNo;
+		$$Line = gettext2( 0,##LineNo + 1, 2,##LineNo + 1 );
+		$$Chr1 = midstr( $$Line, 0, 1 );
+		$$Chr2 = midstr( $$Line, 1, 1 );
+
+		if(   ( $$Chr1 != "A" )
+			&&( $$Chr1 != "B" )
+			&&( $$Chr1 != "C" )
+			&&( $$Chr1 != "D" )
+			&&( $$Chr1 != "E" )
+			&&( $$Chr1 != "F" )
+			&&( $$Chr1 != "G" )
+			&&( $$Chr1 != "H" )
+			&&( $$Chr1 != "I" )
+			&&( $$Chr1 != "J" )
+			&&( $$Chr1 != "K" )
+			&&( $$Chr2 != " " ) ) $$Chr2 = "";
+
+		// コメントやタグ以外はトラック名を挿入
+		if ( $$Chr2 == "" )
+		{
+			if( ($$Chr1 != "#")&&($$Chr1 != ";") ) insert "A ";
+		}
+
+		##LineNo = ##LineNo + 1;
+	}
+
+	// テンポ、音色、ボリューム、オクターブの補完
+	$$AddTxt = "";
+	moveto 0,0;
+	searchdown "t[1-9]", casesense, regular;
+	if( result == false ) $$AddTxt = $$AddTxt + "t210";
+
+	moveto 0,0;
+	searchdown "@[0-9]", casesense, regular;
+	if( result == false ) $$AddTxt = $$AddTxt + "@90";
+
+	moveto 0,0;
+	searchdown "v[1-9]", casesense, regular;
+	if( result == false ) $$AddTxt = $$AddTxt + "v15";
+
+	moveto 0,0;
+	searchdown "o[1-8]", casesense, regular;
+	if( result == false ) $$AddTxt = $$AddTxt + "o5";
+
+	moveto 0,0;
+	insert "A " + $$AddTxt + "\n";
+
+	return;
+}
+
+
+// ****************************************
+// バイナリファイル演奏処理
+//
+//  call _PlayMub;
+//
+// 戻り値：
+//     なし
+// ****************************************
+_PlayMub:
+{
+	//--------------------
+	// 演奏処理
+	//--------------------
+	// MUCOM88にMUBファイルを渡して演奏を開始
+	$$ExcStr = $AppPath + " " + "-d " + $BinPath;
+	call _DEBUG "[MUCOM88] 演奏処理実行：" + $$ExcStr;
+	##Start_Tk = tickcount;
+	runsync2 $$ExcStr; // アイコンの状態にしないで待機(sync2)
+
+	// ユーザがDOS窓を閉じたら経過時間（秒）を算出
+	##End_Tk = tickcount;
+	$$Play_Time = str((##End_Tk - ##Start_Tk) / 1000);
+	call _DEBUG "[MUCOM88] 演奏処理終了：経過時間 " + $$$Play_Time + "秒";
+	return;
+}
+
+
 
 // ****************************************
 // デバッグ情報の出力
