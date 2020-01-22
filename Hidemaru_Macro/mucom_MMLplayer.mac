@@ -19,7 +19,7 @@
 //               ②MMLファイル上で本マクロを実行。
 //
 //               #time 60 のようにパラメータを記述すればデフォルト値を設定可能。
-//               新規作成の場合はWAV出力できないので、先にファイル保存が必要。
+//               新規作成の場合はmucom88.exeと同じフォルダにWAVファイルを出力する。
 //
 //      ミュート機能：①MMLファイルに拡張タグ #mute を記述。
 //                    ②演奏またはWAV出力を実行する。
@@ -30,7 +30,7 @@
 //                    トラックをミュートさせることが可能。（例： #mute ABC ）
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
-// 更新履歴 : 2020/01/21 Ver 1.01  MUBファイルの再生などの機能を追加
+// 更新履歴 : 2020/01/22 Ver 1.02  新規作成の場合でもWAVファイル出力ができるように修正。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -47,6 +47,9 @@
 
 	// [拡張タグ]WAVファイル出力モード
 	$Tag_WavOut = "#time";
+
+	// 新規作成の場合に出力するWAVファイル名
+	$DefWavName = "_new.wav";
 
 	// [拡張タグ]ミュート設定
 	$Tag_Mute = "#mute";
@@ -169,16 +172,23 @@
 		// WAV出力の準備処理
 		//----------------------------------------
 
-		// WAV出力が有効でも、新規作成の場合は実行しない
+		// 作成するWAVファイル名
 		if( 0 == strlen( $BaseName ) )
 		{
-			// WAV出力は演奏との排他処理になので、この場合はマクロ終了とする。
-			$ErrMsg = "新規作成の場合、WAVファイル出力は実行できません。（ファイルの保存を行ってください）";
-			call _DEBUG "【エラー】WAV出力：" + $ErrMsg;
-			message $ErrMsg, $MacName, 0x10;
-			goto END;
+			// 新規作成の場合は固定ファイル名でmucom88.exeと同じフォルダに出力する
+			$WavName = $DefWavName;
+			$WavPath = $MUCOM88_Dir + $DefWavName;
+			call _DEBUG "WAV出力：新規作成ファイル, $WavPath=" + $WavPath;
 		}
+		else
+		{
+			// 既存のファイルであればファイル名を流用
+			$WavName = $BaseName + ".wav";
 
+			// WAVファイルの出力先は自ファイルのカレントディレクトリ
+			$WavPath = leftstr( filename2, strlen(filename2) - strlen(basename2) ) + $WavName;
+			call _DEBUG "WAV出力：既存MMLファイル, $WavPath=" + $WavPath;
+		}
 
 		// WAV出力タグのパラメータ値が記述されている場合は取得
 		#WavLenVal = 0;
@@ -204,16 +214,13 @@
 		beep;
 		call _DEBUG "WAV出力：ユーザ入力開始";
 
-		// 作成するWAVファイル名
-		$WavName = $BaseName + ".wav";
-
 		// 入力メニューの表示
 		call _DspSetTime "【録音時間の設定】" + $WavName, 0, 9999, #WavLenVal;
 		$WavTimeStr = $$return;
 		if( 0 < strlen( $WavTimeStr ) )
 		{
 			// WAV出力用のコマンドラインオプションを作成
-			$Opt_WavOut = "-x -w " + $WavName + " -l " + $WavTimeStr + " ";
+			$Opt_WavOut = "-x -w " + $WavPath + " -l " + $WavTimeStr + " ";
 			call _DEBUG "WAV出力：録音時間確定 $Opt_WavOut=\"" + $Opt_WavOut + "\"";
 		}
 		else
@@ -424,7 +431,7 @@
 	// WAV出力モードか確認
 	if( 0 == strlen($Opt_WavOut) )
 	{
-		// MUBファイルをMUCOM88で実行して演奏を開始
+		// 演奏モード。MUBファイルをMUCOM88で開く
 		call _PlayMub;
 	}
 	else
@@ -433,10 +440,7 @@
 		// WAV出力
 		//--------------------
 
-		// WAVファイルのフルパスを作成
-		$WavPath = leftstr( filename2, strlen(filename2) - strlen(basename2) ) + $WavName;
-
-		// 過去に作成したファイルは削除
+		// 過去に作成したWAVファイルは削除
 		deletefile $WavPath;
 
 		// MUCOM88を実行してWAVファイルを出力（演奏は行われない。）
@@ -446,7 +450,7 @@
 		runsync2 $ExcStr; // アイコンの状態で待機(sync)
 
 		// WAVファイルの存在チェック（ウイルス対策ソフトの影響で失敗する可能性もある）
-		#Ret = existfile( $WavName );
+		#Ret = existfile( $WavPath );
 		if( false != #Ret )
 		{
 			beep; // アイコンが「？」だと無音なのでBeep 君はエターナル
@@ -455,22 +459,22 @@
 			call _Sec2TimeSub val( $WavTimeStr );
 			$WavTimeStmp = $$return;
 
-			call _DEBUG "[WAV出力モード] WAVファイル出力：" + $WavName + " [" + $WavTimeStmp + "] (" + $WavTimeStr + "秒)";
+			call _DEBUG "[WAV出力モード] WAVファイル出力：" + $WavPath + " [" + $WavTimeStmp + "] (" + $WavTimeStr + "秒)";
 
 			// ユーザへの問い合わせ
-			$ErrMsg = "WAVファイル " + $WavName + " [" + $WavTimeStmp + "] (" + $WavTimeStr + "秒) を作成しました。\n"
+			$ErrMsg = "WAVファイル " + $WavPath + " [" + $WavTimeStmp + "] (" + $WavTimeStr + "秒) を作成しました。\n"
 					+ "ファイルを開きますか？";
 			#Ret = message( $ErrMsg, $MacName,  (0x20|0x04) ); // (MB_ICONQUESTION | MB_YESNO
 			// 「はい」が選択されたら関連付けで開く
 			if( 6 == #Ret )
 			{
-				call _DEBUG "[WAV出力モード] WAVファイルオープン：" + $WavName;
-				openbyshell $WavName;
+				call _DEBUG "[WAV出力モード] WAVファイルオープン：" + $WavPath;
+				openbyshell $WavPath;
 			}
 		}
 		else
 		{
-			$ErrMsg = "\"" + $WavName + "\" の作成に失敗しました。";
+			$ErrMsg = "\"" + $WavPath + "\" の作成に失敗しました。";
 			call _DEBUG "[WAV出力モード] 【エラー】WAV出力：" + $ErrMsg;
 			message $ErrMsg, $MacName, 0x30;
 			goto END;
