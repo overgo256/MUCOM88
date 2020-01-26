@@ -30,7 +30,7 @@
 //                    トラックをミュートさせることが可能。（例： #mute ABC ）
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
-// 更新履歴 : 2020/01/22 Ver 1.02  新規作成の場合でもWAVファイル出力ができるように修正。
+// 更新履歴 : 2020/01/26 Ver 1.03  mucom88.exeと異なるフォルダのMMLでもリズム音源が鳴るように修正。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -432,7 +432,7 @@
 	if( 0 == strlen($Opt_WavOut) )
 	{
 		// 演奏モード。MUBファイルをMUCOM88で開く
-		call _PlayMub;
+		call _PlayMub "-d ", $BinPath, "演奏処理";
 	}
 	else
 	{
@@ -445,9 +445,8 @@
 
 		// MUCOM88を実行してWAVファイルを出力（演奏は行われない。）
 		// ※付記：仮に長さ指定 -l を省略した場合は90秒固定の仕様。
-		$ExcStr = $AppPath + " " + $Opt_WavOut + $BinPath;
-		call _DEBUG "[WAV出力モード] 開始：" + $ExcStr;
-		runsync2 $ExcStr; // アイコンの状態で待機(sync)
+		// WAV出力モード。MUBファイルをMUCOM88で開く
+		call _PlayMub $Opt_WavOut, $BinPath, "WAV出力";
 
 		// WAVファイルの存在チェック（ウイルス対策ソフトの影響で失敗する可能性もある）
 		#Ret = existfile( $WavPath );
@@ -530,6 +529,48 @@ endmacro;
 //------------------------------
 // 各サブルーチン
 //------------------------------
+
+// ****************************************
+// バイナリファイル演奏処理
+//
+//  call _PlayMub $$1, $$2;
+//           $$1 オプション
+//           $$2 MUBファイルのパス
+//           $$3 処理名
+//
+// 戻り値：
+//     なし
+// ****************************************
+_PlayMub:
+{
+	$$OptStr  = $$1;
+	$$BinPath = $$2;
+	$$PrcName = $$3;
+
+	//カレントディレクトリを実行ファイルがあるフォルダに変更
+	$$CurDir = directory; // 退避
+	call _SetCurDir $MUCOM88_Dir;
+
+	//--------------------
+	// 演奏処理
+	//--------------------
+	// MUCOM88にMUBファイルを渡して演奏を開始
+	$$ExcStr = $AppPath + " " + $$OptStr + $$BinPath;
+	call _DEBUG "[MUCOM88] " + $$PrcName + "実行：" + $$ExcStr;
+	##Start_Tk = tickcount;
+	runsync2 $$ExcStr; // アイコンの状態にしないで待機(sync2)
+
+	// ユーザがDOS窓を閉じたら経過時間（秒）を算出
+	##End_Tk = tickcount;
+	$$Play_Time = str((##End_Tk - ##Start_Tk) / 1000);
+	call _DEBUG "[MUCOM88] " + $$PrcName + "終了：経過時間 " + $$$Play_Time + "秒";
+
+	//カレントディレクトリを元に戻す
+	call _SetCurDir $$CurDir;
+
+	return;
+}
+
 
 //****************************************
 //   MMLタグの検索およびパラメータの取得
@@ -1123,31 +1164,35 @@ _EditNewMML:
 
 
 // ****************************************
-// バイナリファイル演奏処理
+// カレントディレクトリの変更
 //
-//  call _PlayMub;
+//  call _SetCurDir $$1;
+//           $$1 フォルダのパス
 //
 // 戻り値：
 //     なし
 // ****************************************
-_PlayMub:
+_SetCurDir:
 {
-	//--------------------
-	// 演奏処理
-	//--------------------
-	// MUCOM88にMUBファイルを渡して演奏を開始
-	$$ExcStr = $AppPath + " " + "-d " + $BinPath;
-	call _DEBUG "[MUCOM88] 演奏処理実行：" + $$ExcStr;
-	##Start_Tk = tickcount;
-	runsync2 $$ExcStr; // アイコンの状態にしないで待機(sync2)
+	//シェルオブジェクトの作成
+	##Obj = createobject("WScript.Shell");
+	if(##Obj == 0)
+	{
+		$ErrMsg = "オブジェクトの作成に失敗しました。";
+		call _DEBUG "[_SetCurDir] 【エラー】：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x30;
+		endmacro;
+	}
+	//カレントディレクトリを変更
+	setpropstr ##Obj, "CurrentDirectory", $$1;
+	if(!result)
+	{
+		$ErrMsg = "カレントディレクトリの変更に失敗しました。";
+		call _DEBUG "[_SetCurDir] 【エラー】：" + $ErrMsg;
+	}
 
-	// ユーザがDOS窓を閉じたら経過時間（秒）を算出
-	##End_Tk = tickcount;
-	$$Play_Time = str((##End_Tk - ##Start_Tk) / 1000);
-	call _DEBUG "[MUCOM88] 演奏処理終了：経過時間 " + $$$Play_Time + "秒";
 	return;
 }
-
 
 
 // ****************************************
