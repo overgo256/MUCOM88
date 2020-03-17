@@ -30,7 +30,7 @@
 //                    トラックをミュートさせることが可能。（例： #mute ABC ）
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
-// 更新履歴 : 2020/01/26 Ver 1.03  mucom88.exeと異なるフォルダのMMLでもリズム音源が鳴るように修正。
+// 更新履歴 : 2020/03/17 Ver 1.05  MUCOM88win 200315版に仮対応。（二重に演奏の回避）
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -38,12 +38,23 @@
 	// mucom88.exeのあるフォルダ（※「\」は「\\」と記述）
 	$MUCOM88_Dir = "C:\\_userApp\\mucom88";
 
+	// 標準音色ファイル名
+	$DefVoiceName = "voice.dat";
+
+	// 標準pcmファイル名
+	$DefPcmName = "mucompcm.bin";
+
 	// 一時MMLファイル名
 	$TmpMucName = "_tmp.muc";
 
 	// 一時バイナリファイル名
 	$BinName = "_tmp.mub";
 
+	// FM音色ファイルタグ
+	$Tag_Voice = "#voice";
+
+	// ADPCMファイルタグ
+	$Tag_Pcm = "#pcm";
 
 	// [拡張タグ]WAVファイル出力モード
 	$Tag_WavOut = "#time";
@@ -89,7 +100,8 @@
 	{
 		// MUBファイルなら演奏のみ対応する
 		$BinPath = filename2;
-		call _PlayMub;
+		call _DEBUG "初期処理：MUBファイルを検出。：" + $BinPath;
+		call _ExcMucom "-d ", $BinPath, "演奏処理(MUBファイル直接指定)";
 		goto END;
 	}
 
@@ -143,6 +155,19 @@
 
 	// MMLファイル名からファイル名のベースを作成（新規作成であれば長さ０）
 	$BaseName = leftstr( basename2, strlen( basename2 ) - strlen( $FileType ) );
+
+	// voiceタグチェック
+	call _DEBUG "voiceタグチェック：$Tag_Voice=" + $Tag_Voice;
+	call _GetMmlTag $Tag_Voice, linecount2;
+	call _TrmSub $$return; // 余白は削除
+	$TagSts_Voice = $$return;
+
+	// pcmタグチェック
+	call _DEBUG "pcmタグチェック：$Tag_Pcm=" + $Tag_Pcm;
+	call _GetMmlTag $Tag_Pcm, linecount2;
+	call _LTrmSub $$return; // 余白は削除
+	$TagSts_Pcm = $$return;
+
 
 	// ミュートタグチェック
 	call _DEBUG "拡張タグチェック：$Tag_Mute=" + $Tag_Mute;
@@ -376,6 +401,7 @@
 		replaceallfast "^[^']*'", "", regular;
 		// コメントアウト
 		replaceallfast $RepKey, ";\\1", regular;
+
 		enabledraw;
 
 		// 一時ファイル行頭にテンポ設定を挿入
@@ -396,33 +422,10 @@
 	deletefile $BinPath;
 
 	// 一時MMLをコンパイル
-	$ExcStr = $AppPath + " -o " + $BinPath + " -c " + $TmpMucPath;
-	call _DEBUG "[MUCOM88] コンパイル実行：" + $ExcStr;
-	runex $ExcStr, 1, // ファイル名, 同期フラグ
-			0, "",    // 標準入力フラグ, 標準入力ファイル名
-			7, "",    // 標準出力フラグ, 標準出力ファイル名
-			7, "",    // 標準エラー出力フラグ, 標準エラー出力ファイル名
-			0, "",    // 作業フォルダフラグ, 作業フォルダ名
-			1, 1, 0, 0; // 表示フラグ, 非描画フラグ, エンコード, 拡張フラグ
-	// ※実行結果はアウトプット枠に出力される
+ 	call _ComplMML $TmpMucPath, $BinPath;
+	if( "0" == $$return ) goto END; // エラーなら終了
 
-
-	// 一時バイナリファイルの存在チェック
-	// ※ウイルス対策ソフトの影響で失敗する可能性もある
-	#Ret = existfile( $BinPath );
-	if( false == #Ret )
-	{
-		$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
-		call _DEBUG "[MUCOM88] 【エラー】一時バイナリファイルなし：" + $ErrMsg;
-		message $ErrMsg, $MacName, 0x10;
-
-		// エラー情報はアウトプット枠に出ているはずなので、そちらへフォーカスを遷移
-		setfocus 5;
-		goto END;
-	}
-
-	call _DEBUG "[MUCOM88] コンパイルOK。";
-
+	call _DEBUG "[MUCOM88] 一時MMLのコンパイル完了。";
 
 	//------------------------------
 	// メイン処理
@@ -432,7 +435,8 @@
 	if( 0 == strlen($Opt_WavOut) )
 	{
 		// 演奏モード。MUBファイルをMUCOM88で開く
-		call _PlayMub "-d ", $BinPath, "演奏処理";
+		call _DEBUG "[MUCOM88] 演奏モード";
+		call _ExcMucom "-d ", $BinPath, "演奏処理";
 	}
 	else
 	{
@@ -446,7 +450,8 @@
 		// MUCOM88を実行してWAVファイルを出力（演奏は行われない。）
 		// ※付記：仮に長さ指定 -l を省略した場合は90秒固定の仕様。
 		// WAV出力モード。MUBファイルをMUCOM88で開く
-		call _PlayMub $Opt_WavOut, $BinPath, "WAV出力";
+		call _DEBUG "[MUCOM88] WAV出力モード";
+		call _ExcMucom $Opt_WavOut, $BinPath, "WAV出力";
 
 		// WAVファイルの存在チェック（ウイルス対策ソフトの影響で失敗する可能性もある）
 		#Ret = existfile( $WavPath );
@@ -512,7 +517,7 @@
 			{
 				// 書き込み禁止の警告
 				$ErrMsg = "\"" + basename2 + "\" は書き込み禁止です。";
-				call _DEBUG "[演奏モード] 【エラー】タグ編集：" + $ErrMsg;
+				call _DEBUG "[演奏モード] 【警告】タグ編集：" + $ErrMsg;
 				message $ErrMsg, $MacName, 0x30;
 			}
 		}
@@ -531,9 +536,163 @@ endmacro;
 //------------------------------
 
 // ****************************************
-// バイナリファイル演奏処理
+// コンパイル処理
 //
-//  call _PlayMub $$1, $$2;
+//  call _ComplMML $$1, $$2;
+//           $$1 MMLファイルのパス
+//           $$2 MUBファイルのパス
+//
+// 戻り値：
+//     $$RetSts "0":エラー  "1":成功
+// ****************************************
+_ComplMML:
+{
+	$MucPath = $$1;		// MMLファイルのパス
+	$$BinPath = $$2;	// MUBファイルのパス
+
+	// MMLのカレントディレクトリ
+	$$CurDir = directory;
+	$$Chk = rightstr( $$CurDir, 1 );
+	if( "\\" != $$Chk ) $$CurDir = $$CurDir + "\\";
+
+	// voiceタグチェック
+	##Flg_VoiceNil  = 0; // voiceファイル不在フラグ
+	##Flg_VoiceCopy = 0; // 標準voice補完フラグ
+	if( 0 < strlen($TagSts_Voice) )
+	{
+		// voiceファイルの記述がある場合は存在チェック
+		#Ret = existfile( $$CurDir + $TagSts_Voice );
+		if( false == #Ret )
+		{
+			##Flg_VoiceNil = 1;
+			call _DEBUG "[_ComplMML] カレントに存在しないvoiceファイル：" + $TagSts_Voice;
+
+			// 指定ファイルが標準voiceファイルなら一時的にカレントへコピーして補完する
+			if( $DefVoiceName == $TagSts_Voice )
+			{
+				// mucom88.exeのフォルダに存在するか確認
+				#Ret = existfile( $MUCOM88_Dir + $DefVoiceName );
+				if( false != #Ret )
+				{
+					// コンパイル後の削除フラグを立てる
+					##Flg_VoiceCopy = 1;
+
+					// 標準voiceファイルのコピー
+					call _DEBUG "[_ComplMML] " + $TagSts_Voice + "の補完を行います。";
+					call _CopyFile $MUCOM88_Dir + $DefVoiceName, $$CurDir + $DefVoiceName;
+				}
+			}
+		}
+	}
+
+	// pcmタグチェック
+	##Flg_PcmNil  = 0; // pcmファイル不在フラグ
+	##Flg_PcmCopy = 0; // 標準pcm補完フラグ
+	if( 0 < strlen($TagSts_Pcm) )
+	{
+		// pcmファイルの記述がある場合は存在チェック
+		#Ret = existfile( $$CurDir + $TagSts_Pcm );
+		if( false == #Ret )
+		{
+			##Flg_PcmNil = 1;
+			call _DEBUG "[_ComplMML] カレントに存在しないpcmファイル：" + $TagSts_Pcm;
+
+			// 指定ファイルが標準pcmファイルなら一時的にカレントへコピーして補完する
+			if( $DefPcmName == $TagSts_Pcm )
+			{
+				// mucom88.exeのフォルダに存在するか確認
+				#Ret = existfile( $MUCOM88_Dir + $DefPcmName );
+				if( false != #Ret )
+				{
+					// コンパイル後の削除フラグを立てる
+					##Flg_PcmCopy = 1;
+
+					// 標準pcmファイルのコピー
+					call _DEBUG "[_ComplMML] " + $TagSts_Pcm + "の補完を行います。";
+					call _CopyFile $MUCOM88_Dir + $DefPcmName, $$CurDir + $DefPcmName;
+				}
+			}
+		}
+	}
+
+	// -cオプションはコンパイルと同時に演奏するため、 -gオプションで「コンパイルのみ」を指定
+	$$ExcStr = $AppPath + " -o " + $$BinPath + " -g " + $MucPath;
+	call _DEBUG "[_ComplMML] コンパイル実行：" + $$ExcStr;
+	runex $$ExcStr, 1, // ファイル名, 同期フラグ
+			0, "",    // 標準入力フラグ, 標準入力ファイル名
+			7, "",    // 標準出力フラグ, 標準出力ファイル名
+			7, "",    // 標準エラー出力フラグ, 標準エラー出力ファイル名
+			0, "",    // 作業フォルダフラグ, 作業フォルダ名
+			1, 1, 0, 0; // 表示フラグ, 非描画フラグ, エンコード, 拡張フラグ
+	// ※実行結果はアウトプット枠に出力される
+
+
+	// バイナリファイルの存在チェック
+	// ※ウイルス対策ソフトの影響で失敗する可能性もある
+	#Ret = existfile( $$BinPath );
+	if( false == #Ret )
+	{
+		$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
+		call _DEBUG "[_ComplMML] 【エラー】一時バイナリファイルなし：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+
+		// エラー情報はアウトプット枠に出ているはずなので、そちらへフォーカスを遷移
+		setfocus 5;
+		$$RetSts = "0";
+	}
+	else
+	{
+		$$RetSts = "1";
+
+		// コンパイル成功。
+		call _DEBUG "[_ComplMML] コンパイルOK。";
+	}
+
+	// 標準voiceファイルを一時的にコピーしていたら削除
+	if( 0 < ##Flg_VoiceCopy )
+	{
+		// カレントから削除（最初から存在する場合は対象外）
+		deletefile $$CurDir + $DefVoiceName;
+		call _DEBUG "[_ComplMML] 一時voiceファイル " + $DefVoiceName + " を削除。";
+
+		// ファイル不在フラグはキャンセル
+		##Flg_VoiceNil = 0;
+	}
+
+	// 標準pcmファイルを一時的にコピーしていたら削除
+	if( 0 < ##Flg_PcmCopy )
+	{
+		// カレントから削除（最初から存在する場合は対象外）
+		deletefile $$CurDir + $DefPcmName;
+		call _DEBUG "[_ComplMML] 一時pcmファイル " + $DefPcmName + " を削除。";
+
+		// ファイル不在フラグはキャンセル
+		##Flg_PcmNil = 0;
+	}
+
+	// voiceタグおよびpcmタグの警告処理
+	if( (##Flg_VoiceNil != 0)||(##Flg_PcmNil != 0) )
+	{
+		$ErrMsg = "";
+		if( $$RetSts == "1" ) $ErrMsg = "コンパイルは成功しましたが、";
+		$ErrMsg = $ErrMsg + "MMLにタグで指定されているファイル ";
+		if( ##Flg_VoiceNil != 0 ) $ErrMsg = $ErrMsg + "\"" + $TagSts_Voice + "\"";
+		if(( ##Flg_VoiceNil != 0 )&&(  ##Flg_PcmNil != 0 ) ) $ErrMsg = $ErrMsg + "および";
+		if( ##Flg_PcmNil != 0 ) $ErrMsg = $ErrMsg + "\"" + $TagSts_Pcm + "\"";
+		$ErrMsg = $ErrMsg + "がMMLファイルと同じフォルダに存在しません。";
+
+		call _DEBUG "[_ComplMML] 【警告】：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x30;
+	}
+
+	return $$RetSts;
+}
+
+
+// ****************************************
+// MUCOM実行処理
+//
+//  call _ExcMucom $$1, $$2, $$3;
 //           $$1 オプション
 //           $$2 MUBファイルのパス
 //           $$3 処理名
@@ -541,32 +700,43 @@ endmacro;
 // 戻り値：
 //     なし
 // ****************************************
-_PlayMub:
+_ExcMucom:
 {
 	$$OptStr  = $$1;
 	$$BinPath = $$2;
 	$$PrcName = $$3;
 
-	//カレントディレクトリを実行ファイルがあるフォルダに変更
-	$$CurDir = directory; // 退避
-	call _SetCurDir $MUCOM88_Dir;
+	// 引数のログ
+	call _DEBUG "[_ExcMucom] パラメータ：$$OptStr=" + $$OptStr + ", $$BinPath=" + $$BinPath + ", $$PrcName=" + $$PrcName;
+
+	// MMLのカレントディレクトリ
+	$$CurDir = directory;
+	$$Chk = rightstr( $$CurDir, 1 );
+	if( "\\" != $$Chk ) $$CurDir = $$CurDir + "\\";
+	call _DEBUG "[_ExcMucom] カレントディレクトリを確認：$$CurDir=" + $$CurDir;
+
+	// 一時的にカレントディレクトリを実行ファイルがあるフォルダに変更
+	//call _SetCurDir $MUCOM88_Dir;
 
 	//--------------------
-	// 演奏処理
+	// 実行処理
 	//--------------------
-	// MUCOM88にMUBファイルを渡して演奏を開始
-	$$ExcStr = $AppPath + " " + $$OptStr + $$BinPath;
-	call _DEBUG "[MUCOM88] " + $$PrcName + "実行：" + $$ExcStr;
+	// リズム音源ファイルのパスを作成（末尾の\は取る）
+	$$RythPath = leftstr( $MUCOM88_Dir, strlen($MUCOM88_Dir) -1 );
+
+	// MUCOM88にMUBファイルを渡して演奏を開始（rオプションでリズム音源ファイルの場所を指定）
+	$$ExcStr = $AppPath + " " + $$OptStr + $$BinPath + " -r \"" + $$RythPath +"\"";
+	call _DEBUG "[_ExcMucom] " + $$PrcName + "実行：" + $$ExcStr;
 	##Start_Tk = tickcount;
 	runsync2 $$ExcStr; // アイコンの状態にしないで待機(sync2)
 
 	// ユーザがDOS窓を閉じたら経過時間（秒）を算出
 	##End_Tk = tickcount;
 	$$Play_Time = str((##End_Tk - ##Start_Tk) / 1000);
-	call _DEBUG "[MUCOM88] " + $$PrcName + "終了：経過時間 " + $$$Play_Time + "秒";
+	call _DEBUG "[_ExcMucom] " + $$PrcName + "終了：経過時間 " + $$Play_Time + "秒";
 
 	//カレントディレクトリを元に戻す
-	call _SetCurDir $$CurDir;
+	//call _SetCurDir $$CurDir;
 
 	return;
 }
@@ -590,6 +760,7 @@ _GetMmlTag:
 {
 	$$FindTag = $$1;
 	##LoopMax = ##2;
+	call _DEBUG "[_GetMmlTag] タグ検索開始：$$FindTag=" + $$FindTag;
 
 	$$RetStr  = "";
 	$$SeekChr = "\n"; // 区切り文字
@@ -648,8 +819,21 @@ _GetMmlTag:
 		$$RetStr = $$return;
 
 		// タグが存在しつつパラメータは存在しない場合、半角スペースを返す
-		if( 0 == strlen( $$RetStr ) ) $$RetStr= " ";
+		if( 0 == strlen( $$RetStr ) )
+		{
+			$$RetStr= " ";
+			call _DEBUG "[_GetMmlTag] " + $$FindTag + "タグのみ検出。パラメータなし";
+		}
+		else
+		{
+			call _DEBUG "[_GetMmlTag] " + $$FindTag + "タグを検出。 $$RetStr=" + $$RetStr;
+		}
 	}
+	else
+	{
+		call _DEBUG "[_GetMmlTag] タグ未検出";
+	}
+
 
 	return( $$RetStr );
 }
@@ -1190,6 +1374,44 @@ _SetCurDir:
 		$ErrMsg = "カレントディレクトリの変更に失敗しました。";
 		call _DEBUG "[_SetCurDir] 【エラー】：" + $ErrMsg;
 	}
+
+	// 作成したオブジェクトを解放
+	releaseobject ##Obj;
+
+	return;
+}
+
+
+// ****************************************
+// ファイルのコピー
+//
+//  call _CopyFile $$1, $$2;
+//           $$1 コピー元のパス
+//           $$2 コピー先のパス
+//
+// 戻り値：
+//     なし
+// ****************************************
+_CopyFile:
+{
+	$$SrcPath  = $$1; // コピー元のパス
+	$$CopyPath = $$2; // コピー先のパス
+
+	call _DEBUG "[_CopyFile] コピー元：" + $$SrcPath + ", コピー先：" + $$CopyPath;
+
+	// ファイルシステムオブジェクトの作成
+	##Obj = createobject("Scripting.FileSystemObject");
+
+	// ファイルコピーを実行
+	callmethod ##Obj, "CopyFile", $$SrcPath, $$CopyPath;
+	if(!result)
+	{
+		$ErrMsg = "ファイルのコピーに失敗しました。";
+		call _DEBUG "[_CopyFile] 【エラー】：" + $ErrMsg;
+	}
+
+	// 作成したオブジェクトを解放
+	releaseobject ##Obj;
 
 	return;
 }
