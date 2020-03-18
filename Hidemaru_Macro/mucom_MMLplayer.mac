@@ -16,25 +16,57 @@
 //            編集中、または新規作成中ファイルでも可。
 //
 //      WAV出力：①既存のMMLファイルに拡張タグ #time を記述。（演奏は省略される）
-//               ②MMLファイル上で本マクロを実行。
+//               ②MMLファイル上で本マクロを実行。（即時WAVファイルが作成される）
 //
-//               #time 60 のようにパラメータを記述すればデフォルト値を設定可能。
-//               新規作成の場合はmucom88.exeと同じフォルダにWAVファイルを出力する。
+//               ※ #time 60 のようにパラメータを記述すれば録音時間のデフォルト値を設定可能。
+//               ※ 新規作成の場合はmucom88.exeと同じフォルダにWAVファイルを出力する。
 //
-//      ミュート機能：①MMLファイルに拡張タグ #mute を記述。
-//                    ②演奏またはWAV出力を実行する。
+//      VGM/S98ファイル出力：
+//               ①既存のMMLファイルに拡張タグ #logfile を記述。（演奏は省略される）
+//               ②パラメータに vgm または s98 を記述し、MMLファイル上で本マクロを実行。
 //
-//                    テンポを記述したトラックをミュートした場合でも、最初に記述され
-//                    ているテンポで演奏される。（テンポチェンジには未対応）
-//                    パラメータとして演奏するトラック名を記述することで、未記述の
-//                    トラックをミュートさせることが可能。（例： #mute ABC ）
+//               ※ 出力時間はWAV出力の #time タグのパラメータを共有する。
+//               ※ パラメータを省略した場合はWAV出力が優先的に動作する。
+//
+//      ミュート機能：
+//               ①MMLファイルに拡張タグ #mute を記述。
+//               ②演奏またはファイル出力を実行する。
+//
+//               ※ テンポを記述したトラックをミュートした場合でも、最初に記述されている
+//                  テンポで演奏される。（テンポチェンジには未対応）
+//               ※ パラメータとして演奏するトラック名を記述することで、未記述のトラックを
+//                  ミュートさせることが可能。（例： #mute ABC ）
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
-// 更新履歴 : 2020/03/17 Ver 1.05  MUCOM88win 200315版に仮対応。（二重に演奏の回避）
+//           MUCOM88 for Windows 2020/03/15リリース版
+// 更新履歴 : 2020/03/18 Ver 1.06  VGM/S98ファイル出力に対応。
 //-------------------------------------------------------------------
 
 	//==================================================
-	// 【ユーザ設定項目】
+
+	// ----------【システム設定項目 ※固定】----------
+
+	// FM音色ファイルタグ
+	$Tag_Voice = "#voice";
+
+	// ADPCMファイルタグ
+	$Tag_Pcm = "#pcm";
+
+	// ファイル出力時間
+	$Tag_OutTime = "#time";
+
+	// VGM/S98出力設定
+	$Tag_LogFile = "#logfile";
+
+	// メッセージおよびデバッグ用のマクロ名
+	$MacName = "mucom_MMLplayer.mac";
+
+	// [拡張タグ]ミュート設定
+	$Tag_Mute = "#mute";
+
+
+	// ----------【ユーザ設定項目 ※編集可】----------
+
 	// mucom88.exeのあるフォルダ（※「\」は「\\」と記述）
 	$MUCOM88_Dir = "C:\\_userApp\\mucom88";
 
@@ -50,23 +82,9 @@
 	// 一時バイナリファイル名
 	$BinName = "_tmp.mub";
 
-	// FM音色ファイルタグ
-	$Tag_Voice = "#voice";
+	// 新規作成の場合に出力するファイル名（拡張子なし）
+	$DefNewName = "_new";
 
-	// ADPCMファイルタグ
-	$Tag_Pcm = "#pcm";
-
-	// [拡張タグ]WAVファイル出力モード
-	$Tag_WavOut = "#time";
-
-	// 新規作成の場合に出力するWAVファイル名
-	$DefWavName = "_new.wav";
-
-	// [拡張タグ]ミュート設定
-	$Tag_Mute = "#mute";
-
-	// メッセージおよびデバッグ用のマクロ名
-	$MacName = "mucom_MMLplayer.mac";
 
 	//==================================================
 	call _DEBUG "==========【マクロ開始】==========";
@@ -130,7 +148,7 @@
 		goto END;
 	}
 
-	// 空のファイルの場合はクリップボードからの貼り付けを試行
+	// 【オマケ機能】空のファイルの場合はクリップボードからの貼り付けを試行
 	if( (linecount2 == 1)&&(linelen2 == 0) )
 	{
 		paste;
@@ -168,6 +186,10 @@
 	call _LTrmSub $$return; // 余白は削除
 	$TagSts_Pcm = $$return;
 
+	// VGM/S98出力タグチェック
+	call _DEBUG "VGM/S98出力タグチェック：$Tag_LogFile=" + $Tag_LogFile;
+	call _GetMmlTag $Tag_LogFile, linecount2;
+	$TagSts_LogFile = $$return;
 
 	// ミュートタグチェック
 	call _DEBUG "拡張タグチェック：$Tag_Mute=" + $Tag_Mute;
@@ -180,77 +202,117 @@
 		#MuteTagLNo = #FoundLineNo;
 	}
 
-	// WAV出力タグチェック
-	call _DEBUG "拡張タグチェック：$Tag_WavOut=" + $Tag_WavOut;
-	$Opt_WavOut = "";
-	call _GetMmlTag $Tag_WavOut, linecount2;
-	$TagSts_WavOut = $$return;
+	// 出力時間タグチェック
+	call _DEBUG "拡張タグチェック：$Tag_OutTime=" + $Tag_OutTime;
+	$Opt_FileOut = "";
+	call _GetMmlTag $Tag_OutTime, linecount2;
+	$TagSts_OutTime = $$return;
 
-	// WAV出力が有効であれば、演奏処理は実行しない（排他制御）
-	if( 0 < strlen($TagSts_WavOut) )
+	// ファイル出力が有効であれば、演奏処理は実行しない（排他制御）
+	if( 0 < strlen($TagSts_OutTime) )
 	{
+		//------------------------------
+		// ファイル出力処理の準備
+		//------------------------------
+		call _DEBUG "ファイル出力：タグ\"" + $Tag_OutTime + "\" を検出。$TagSts_OutTime=" + $TagSts_OutTime;
+
 		// タグの再編集用に検出した位置を記憶しておく
-		#WavTagLNo = #FoundLineNo;
+		#TimeTagLNo = #FoundLineNo;
 
-		call _DEBUG "WAV出力：タグ\"" + $Tag_WavOut + "\" を検出。$TagSts_WavOut=" + $TagSts_WavOut;
-		//----------------------------------------
-		// WAV出力の準備処理
-		//----------------------------------------
-
-		// 作成するWAVファイル名
+		// 新規作成の場合
 		if( 0 == strlen( $BaseName ) )
 		{
-			// 新規作成の場合は固定ファイル名でmucom88.exeと同じフォルダに出力する
-			$WavName = $DefWavName;
-			$WavPath = $MUCOM88_Dir + $DefWavName;
-			call _DEBUG "WAV出力：新規作成ファイル, $WavPath=" + $WavPath;
+			// 代替ファイル名で保存する
+			$BaseName = $DefNewName;
+			$OutFilePath = $MUCOM88_Dir;
+			call _DEBUG "ファイル出力：新規作成ファイル, $BaseName=" + $BaseName;
 		}
 		else
 		{
-			// 既存のファイルであればファイル名を流用
-			$WavName = $BaseName + ".wav";
-
-			// WAVファイルの出力先は自ファイルのカレントディレクトリ
-			$WavPath = leftstr( filename2, strlen(filename2) - strlen(basename2) ) + $WavName;
-			call _DEBUG "WAV出力：既存MMLファイル, $WavPath=" + $WavPath;
+			// 既存MMLファイルであれば、出力先は自ファイルのカレントディレクトリ
+			$OutFilePath = leftstr( filename2, strlen(filename2) - strlen(basename2) );
 		}
 
-		// WAV出力タグのパラメータ値が記述されている場合は取得
-		#WavLenVal = 0;
-		if( " " != $TagSts_WavOut )
+		// ログファイル出力が指定されていた場合はVGM/S98の判定
+		if( 0 < strlen($TagSts_LogFile) )
+		{
+			if( ( "s98" == $TagSts_LogFile )||( "S98" == $TagSts_LogFile ) )
+			{
+				$OutFName = $BaseName + ".s98";
+				$DspFType = "S98";
+				call _DEBUG "ファイル出力：S98ログ作成, $BaseName=" + $BaseName;
+			}
+			else if( ( "vgm" == $TagSts_LogFile )||( "VGM" == $TagSts_LogFile ) )
+			{
+				$OutFName = $BaseName + ".vgm";
+				call _DEBUG "ファイル出力：VGMファイル作成, $BaseName=" + $BaseName;
+				$DspFType = "VGM";
+			}
+			else
+			{
+				// それ以外はWAVファイルとする
+				$OutFName = $BaseName + ".wav";
+				call _DEBUG "ファイル出力：WAVファイル作成, $BaseName=" + $BaseName;
+				$DspFType = "WAV";
+			}
+		}
+		else
+		{
+			// それ以外はWAVファイルとする
+			$OutFName = $BaseName + ".wav";
+			$DspFType = "WAV";
+			call _DEBUG "ファイル出力：WAVファイル作成, $BaseName=" + $BaseName;
+		}
+
+		// ファイル出力先のパスを確定
+		$OutFilePath = $OutFilePath + $OutFName;
+
+		// 出力時間タグのパラメータ値が記述されている場合は取得
+		#OutTimeSec = 0;
+		if( " " != $TagSts_OutTime )
 		{
 			// とりあえず数値に変換して範囲チェック
-			#WavLenVal = val( $TagSts_WavOut );
-			if( #WavLenVal < 0 )
+			#OutTimeSec = val( $TagSts_OutTime );
+			if( #OutTimeSec < 0 )
 			{
-				#WavLenVal = 0;
+				#OutTimeSec = 0;
 			}
-			else if( 9999 < #WavLenVal )
+			else if( 9999 < #OutTimeSec )
 			{
-				#WavLenVal = 9999;
+				#OutTimeSec = 9999;
 			}
 		}
 		else
 		{
 			// デフォルトは90秒
-			#WavLenVal = 90;
+			#OutTimeSec = 90;
 		}
 
 		beep;
-		call _DEBUG "WAV出力：ユーザ入力開始";
+		call _DEBUG "ファイル出力：ユーザ入力開始";
 
 		// 入力メニューの表示
-		call _DspSetTime "【録音時間の設定】" + $WavName, 0, 9999, #WavLenVal;
-		$WavTimeStr = $$return;
-		if( 0 < strlen( $WavTimeStr ) )
+		call _DspSetTime "【" + $DspFType + "ファイル出力時間の設定】 " + $OutFName, 0, 9999, #OutTimeSec;
+		$FileTimeStr = $$return;
+		if( 0 < strlen( $FileTimeStr ) )
 		{
-			// WAV出力用のコマンドラインオプションを作成
-			$Opt_WavOut = "-x -w " + $WavPath + " -l " + $WavTimeStr + " ";
-			call _DEBUG "WAV出力：録音時間確定 $Opt_WavOut=\"" + $Opt_WavOut + "\"";
+			// 出力ファイル別にコマンドラインのオプションを作成
+			if( "WAV" == $DspFType )
+			{
+				// WAV出力用（ -wオプション ）
+				$Opt_FileOut = "-x -w " + $OutFilePath + " -l " + $FileTimeStr + " ";
+			}
+			else
+			{
+				// ログ出力用（ -bオプション ）
+				$Opt_FileOut = "-x -b " + $OutFilePath + " -l " + $FileTimeStr + " ";
+			}
+
+			call _DEBUG "ファイル出力：出力時間確定 $Opt_FileOut=\"" + $Opt_FileOut + "\"";
 		}
 		else
 		{
-			call _DEBUG "WAV出力：ユーザによるキャンセル（処理中止）";
+			call _DEBUG "ファイル出力：ユーザによるキャンセル（処理中止）";
 			goto END;
 		}
 	}
@@ -259,7 +321,7 @@
 	//  ミュートオプション処理
 	//------------------------------
 	// ミュートオプションが有効であれば、設定メニューを表示
-	if( 0 != strlen($TagSts_Mute) )
+	if( 0 < strlen($TagSts_Mute) )
 	{
 		call _DEBUG "ミュートオプション：タグ\"" + $Tag_Mute + "\" を検出。";
 		#Ret = 2; //セパレータの値
@@ -285,7 +347,7 @@
 			}
 		}
 
-		// WAV出力秒数のユーザ入力メニューを表示（ループ処理）
+		// ファイル出力秒数のユーザ入力メニューを表示（ループ処理）
 		while((1 < #Ret)&&(#Ret < 15) )
 		{
 			call _Sec2TimeSub #InpVal;
@@ -356,9 +418,6 @@
 				#i = #i + 1;
 			}
 
-			// 全ミュートでも strlen > 0 とする
-			$MuteEditStr = $MuteEditStr + " ";
-
 			if( 0 < strlen($RepKey) )
 			{
 				// 検索ワードは最終的に先頭の "|" を無視して1文字後ろから適用
@@ -399,10 +458,10 @@
 
 		// 行番号の削除
 		replaceallfast "^[^']*'", "", regular;
-		// コメントアウト
+		// ミュート行のコメントアウト
 		replaceallfast $RepKey, ";\\1", regular;
 
-		enabledraw;
+		enabledraw; // 置換処理完了
 
 		// 一時ファイル行頭にテンポ設定を挿入
 		moveto 0,0;
@@ -427,12 +486,13 @@
 
 	call _DEBUG "[MUCOM88] 一時MMLのコンパイル完了。";
 
+
 	//------------------------------
 	// メイン処理
 	//------------------------------
 
-	// WAV出力モードか確認
-	if( 0 == strlen($Opt_WavOut) )
+	// ファイル出力モードか確認
+	if( 0 == strlen($Opt_FileOut) )
 	{
 		// 演奏モード。MUBファイルをMUCOM88で開く
 		call _DEBUG "[MUCOM88] 演奏モード";
@@ -440,85 +500,90 @@
 	}
 	else
 	{
-		//--------------------
-		// WAV出力
-		//--------------------
+		//----------------------------
+		// ファイル出力処理
+		//----------------------------
 
-		// 過去に作成したWAVファイルは削除
-		deletefile $WavPath;
+		// 過去に作成した出力ファイルは削除
+		deletefile $OutFilePath;
 
 		// MUCOM88を実行してWAVファイルを出力（演奏は行われない。）
 		// ※付記：仮に長さ指定 -l を省略した場合は90秒固定の仕様。
-		// WAV出力モード。MUBファイルをMUCOM88で開く
-		call _DEBUG "[MUCOM88] WAV出力モード";
-		call _ExcMucom $Opt_WavOut, $BinPath, "WAV出力";
+		// ファイル出力モード。MUBファイルをMUCOM88で開く
+		call _DEBUG "[MUCOM88] ファイル出力モード";
+		call _ExcMucom $Opt_FileOut, $BinPath, "ファイル出力";
 
 		// WAVファイルの存在チェック（ウイルス対策ソフトの影響で失敗する可能性もある）
-		#Ret = existfile( $WavPath );
+		#Ret = existfile( $OutFilePath );
 		if( false != #Ret )
 		{
 			beep; // アイコンが「？」だと無音なのでBeep 君はエターナル
 
 			// 秒データからタイムスタンプを作成
-			call _Sec2TimeSub val( $WavTimeStr );
-			$WavTimeStmp = $$return;
+			call _Sec2TimeSub val( $FileTimeStr );
+			$FileTimeStmp = $$return;
 
-			call _DEBUG "[WAV出力モード] WAVファイル出力：" + $WavPath + " [" + $WavTimeStmp + "] (" + $WavTimeStr + "秒)";
+			call _DEBUG "[ファイル出力モード] ファイル出力：" + $OutFilePath + " [" + $FileTimeStmp + "] (" + $FileTimeStr + "秒)";
 
-			// ユーザへの問い合わせ
-			$ErrMsg = "WAVファイル " + $WavPath + " [" + $WavTimeStmp + "] (" + $WavTimeStr + "秒) を作成しました。\n"
-					+ "ファイルを開きますか？";
-			#Ret = message( $ErrMsg, $MacName,  (0x20|0x04) ); // (MB_ICONQUESTION | MB_YESNO
-			// 「はい」が選択されたら関連付けで開く
-			if( 6 == #Ret )
+			// WAVファイル出力ならユーザへの問い合わせ
+			if( "WAV" == $DspFType )
 			{
-				call _DEBUG "[WAV出力モード] WAVファイルオープン：" + $WavPath;
-				openbyshell $WavPath;
+				$ErrMsg = $OutFilePath + " [" + $FileTimeStmp + "] (" + $FileTimeStr + "秒) を作成しました。\n"
+						+ "ファイルを開きますか？";
+				#Ret = message( $ErrMsg, $MacName,  (0x20|0x04) ); // (MB_ICONQUESTION | MB_YESNO
+				// 「はい」が選択されたら関連付けで開く
+				if( 6 == #Ret )
+				{
+					call _DEBUG "[ファイル出力モード] WAVファイルオープン：" + $OutFilePath;
+					openbyshell $OutFilePath;
+				}
 			}
 		}
 		else
 		{
-			$ErrMsg = "\"" + $WavPath + "\" の作成に失敗しました。";
-			call _DEBUG "[WAV出力モード] 【エラー】WAV出力：" + $ErrMsg;
+			$ErrMsg = "\"" + $OutFilePath + "\" の作成に失敗しました。";
+			call _DEBUG "[ファイル出力モード] 【エラー】ファイル作成失敗：" + $ErrMsg;
 			message $ErrMsg, $MacName, 0x30;
 			goto END;
 		}
 
-		// 開いているファイルが書き込み可能であればWAV出力タグの再編集
-		if( (!readonly)&&(!browsemode) )
+		// パラメータが変化していて、かつ書き込み可能であれば出力時間タグの再編集
+		if( $FileTimeStr != $TagSts_OutTime )
 		{
-			call _EditTag $Tag_WavOut, $WavTimeStr, #WavTagLNo;
-		}
-		else
-		{
-			// 書き込み禁止の警告
-			$ErrMsg = "\"" + basename2 + "\" は書き込み禁止です。";
-			call _DEBUG "[WAV出力モード] 【エラー】タグ編集：" + $ErrMsg;
-			message $ErrMsg, $MacName, 0x30;
+			if( (!readonly)&&(!browsemode) )
+			{
+				call _EditTag $Tag_OutTime, $FileTimeStr, #TimeTagLNo;
+			}
+			else
+			{
+				// 書き込み禁止の警告
+				$ErrMsg = "\"" + basename2 + "\" は書き込み禁止です。";
+				call _DEBUG "[ファイル出力モード] 【エラー】タグ編集：" + $ErrMsg;
+				message $ErrMsg, $MacName, 0x30;
+			}
 		}
 
-		// WAV出力モード終了
-		call _DEBUG "[WAV出力モード] 終了";
-		goto END;
+		// ファイル出力モード終了
+		call _DEBUG "[ファイル出力モード] 終了";
 	}
 
-	// ミュートタグの再編集
-	if( 0 < strlen($MuteEditStr) )
+	// パラメータが変化していて、かつ書き込み可能であればミュートタグの再編集
+	if( $TagSts_Mute != $MuteEditStr )
 	{
-		// 開いているファイルが書き込み可能であればWAV出力タグの再編集
 		if( (!readonly)&&(!browsemode) )
 		{
 			call _EditTag $Tag_Mute, $MuteEditStr, #MuteTagLNo;
 		}
 		else
 		{
-			// WAV出力モードでなければ警告（二重警告を回避）
-			if( 0 == strlen($Opt_WavOut) )
+			// ファイル出力モードでなければ警告（二重警告を回避）
+			if( 0 == strlen($Opt_FileOut) )
 			{
 				// 書き込み禁止の警告
 				$ErrMsg = "\"" + basename2 + "\" は書き込み禁止です。";
 				call _DEBUG "[演奏モード] 【警告】タグ編集：" + $ErrMsg;
 				message $ErrMsg, $MacName, 0x30;
+				goto END;
 			}
 		}
 	}
@@ -895,7 +960,7 @@ _DspSetTime:
 	// 入力中の秒数に初期値をセット
 	##InpVal = ##DefVal;
 
-	// WAV出力秒数のユーザ入力メニューを表示（ループ処理）
+	// ファイル出力秒数のユーザ入力メニューを表示（ループ処理）
 	while((1 < ##MnRet)&&(##MnRet < 6) )
 	{
 		call _Sec2TimeSub ##InpVal;
