@@ -43,7 +43,7 @@
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
 //           MUCOM88 for Windows 2020/03/15リリース版
-// 更新履歴 : 2020/04/04 Ver 1.07  ドライバ選択機能を実装。
+// 更新履歴 : 2020/04/04 Ver 1.08  ドライバ名を動作ログに出力するように修正。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -64,7 +64,7 @@
 	$DrvNameLst[1] = "mucom88E";
 	$DrvNameLst[2] = "mucom88EM";
 	$DrvNameLst[3] = "mucomDotNET";
-	#$DrvNameNum = 4; // 上記ドライバ名の登録数
+	#DrvNameNum    = 4; // 上記ドライバ名の登録数
 
 
 	// メッセージおよびデバッグ用のマクロ名
@@ -184,16 +184,14 @@
 	call _DEBUG "driverタグチェック：$Tag_Driver=" + $Tag_Driver;
 	call _GetMmlTag $Tag_Driver, linecount2;
 	$TagSts_Driver = $$return;
+	$DriverName = "*default*"; // 標準出力用に初期化
 	if( 0 < strlen($TagSts_Driver) )
 	{
 		// タグの再編集用に検出した位置を記憶しておく
 		#DriverTagLNo = #FoundLineNo;
 
-		// ドライバ名を取得
-		$DriverName = $TagSts_Driver;
-
 		// ドライバタグのパラメータが空ならドライバ選択メニューを表示
-		if( " " == $DriverName )
+		if( " " == $TagSts_Driver )
 		{
 			// MMLファイルが書き込み可能であれば編集可
 			if( (!readonly)&&(!browsemode) )
@@ -201,16 +199,17 @@
 				menu
 					"【ドライバの選択】",
 					"\x01",
-					"#driver " + $DrvNameLst[0] + "(&0)　\t" + "MUCOM88 1.7（デフォルト）",
-					"#driver " + $DrvNameLst[1] + "(&1)　\t" + "MUCOM88 1.5",
-					"#driver " + $DrvNameLst[2] + "(&2)　\t" + "MUCOM88em（メモリ拡張版）",
-					"#driver " + $DrvNameLst[3] + "(&3)　\t" + "mucomDotNETによるコンパイルと演奏";
+					"(&0) #driver " + $DrvNameLst[0] + "　\t" + "MUCOM88 1.7（デフォルト）",
+					"(&1) #driver " + $DrvNameLst[1] + "　\t" + "MUCOM88 1.5",
+					"(&2) #driver " + $DrvNameLst[2] + "　\t" + "MUCOM88em（メモリ拡張版）",
+					"(&3) #driver " + $DrvNameLst[3] + "　\t" + "mucomDotNETによるコンパイルと演奏";
 
 				#Ret = result;
 				if( 1 == #Ret ) #Ret = 3; // キャプションが選択されたらデフォルト
 
 				if( ((3 <= #Ret)&&(#Ret <= 6)) ||(1 == #Ret) )
 				{
+					// ドライバ名をセット
 					$DriverName = $DrvNameLst[#Ret - 3];
 					call _EditTag $Tag_Driver, $DriverName, #DriverTagLNo;
 
@@ -222,13 +221,17 @@
 		}
 		else
 		{
+
 			// ドライバ選択タグの正当性チェック
 			#i = 0;
 			#Sts = false;
-			while( #i < #$DrvNameNum )
+			while( #i < #DrvNameNum )
 			{
-				if( $DriverName == $DrvNameLst[#i] )
+				if( $TagSts_Driver == $DrvNameLst[#i] )
 				{
+					// ドライバ名を取得
+					$DriverName = $TagSts_Driver;
+
 					#Sts = true;
 					call _DEBUG "【ドライバ選択（TAG）】：$DriverName = [" + $DriverName + "]";
 					break;
@@ -240,7 +243,7 @@
 			// 不明なドライバが記述されている場合は警告
 			if( false == #Sts )
 			{
-				$ErrMsg = "タグ " + $Tag_Driver + " に記述されている \"" + $DriverName + "\" は不明なドライバ名です。";
+				$ErrMsg = "タグ " + $Tag_Driver + " に記述されている \"" + $TagSts_Driver + "\" は不明なドライバ名です。";
 				call _DEBUG "【警告】ドライバ選択：" + $ErrMsg;
 				message $ErrMsg, $MacName, 0x30;
 			}
@@ -759,7 +762,7 @@ _ComplMML:
 		$$RetSts = "1";
 
 		// コンパイル成功。
-		call _DEBUG "[_ComplMML] コンパイルOK。";
+		call _DEBUG "[_ComplMML] コンパイルOK。（【選択ドライバ】" + $DriverName + "）";
 	}
 
 	// 標準voiceファイルを一時的にコピーしていたら削除
@@ -1445,6 +1448,7 @@ _EditNewMML:
 		$$Chr1 = midstr( $$Line, 0, 1 );
 		$$Chr2 = midstr( $$Line, 1, 1 );
 
+		// トラック名の記述かどうかを確認
 		if(   ( $$Chr1 != "A" )
 			&&( $$Chr1 != "B" )
 			&&( $$Chr1 != "C" )
