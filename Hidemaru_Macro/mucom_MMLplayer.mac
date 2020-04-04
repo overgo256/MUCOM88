@@ -37,32 +37,38 @@
 //               ※ パラメータとして演奏するトラック名を記述することで、未記述のトラックを
 //                  ミュートさせることが可能。（例： #mute ABC ）
 //
+//      ドライバ選択：
+//               ①MMLファイルにタグ #driver をパラメータなしで記述。
+//               ②マクロ実行時に表示されるドライバ名を選択。
+//
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
 //           MUCOM88 for Windows 2020/03/15リリース版
-// 更新履歴 : 2020/03/18 Ver 1.06  VGM/S98ファイル出力に対応。
+// 更新履歴 : 2020/04/04 Ver 1.07  ドライバ選択機能を実装。
 //-------------------------------------------------------------------
 
 	//==================================================
 
 	// ----------【システム設定項目 ※固定】----------
 
-	// FM音色ファイルタグ
-	$Tag_Voice = "#voice";
+	// タグ定義
+	$Tag_Voice   = "#voice";    // FM音色ファイルタグ
+	$Tag_Pcm     = "#pcm";      // ADPCMファイルタグ
+	$Tag_OutTime = "#time";     // ファイル出力時間
+	$Tag_Driver  = "#driver";   // ドライバ設定
+	// [独自拡張タグ]
+	$Tag_LogFile = "#logfile";  // VGM/S98出力設定
+	$Tag_Mute    = "#mute";     // ミュート設定
 
-	// ADPCMファイルタグ
-	$Tag_Pcm = "#pcm";
+	// ドライバ選択用
+	$DrvNameLst[0] = "mucom88";
+	$DrvNameLst[1] = "mucom88E";
+	$DrvNameLst[2] = "mucom88EM";
+	$DrvNameLst[3] = "mucomDotNET";
+	#$DrvNameNum = 4; // 上記ドライバ名の登録数
 
-	// ファイル出力時間
-	$Tag_OutTime = "#time";
-
-	// VGM/S98出力設定
-	$Tag_LogFile = "#logfile";
 
 	// メッセージおよびデバッグ用のマクロ名
 	$MacName = "mucom_MMLplayer.mac";
-
-	// [拡張タグ]ミュート設定
-	$Tag_Mute = "#mute";
 
 
 	// ----------【ユーザ設定項目 ※編集可】----------
@@ -148,31 +154,98 @@
 		goto END;
 	}
 
-	// 【オマケ機能】空のファイルの場合はクリップボードからの貼り付けを試行
-	if( (linecount2 == 1)&&(linelen2 == 0) )
+	// MMLファイルが書き込み可能な場合
+	if( (!readonly)&&(!browsemode) )
 	{
-		paste;
-		call _EditNewMML;
+		// 【オマケ機能】空のファイルの場合はクリップボードからの貼り付けを試行
+		if( (linecount2 == 1)&&(linelen2 == 0) )
+		{
+			paste;
+			call _EditNewMML;
+		}
 	}
-
-	// カーソルの現在位置を保存
-	#Cr_X = x;
-	#Cr_Y = y;
-
-	// ファイル内のテキストを丸コピー
-	gofiletop;
-	#Top_X = x;
-	#Top_Y = y;
-	gofileend;
-	#End_X = x;
-	#End_Y = y;
-	$MML_Txt = gettext( #Top_X, #Top_Y, #End_X, #End_Y );
-
-	// カーソルを復帰
-	moveto #Cr_X, #Cr_Y;
+	else
+	{
+		// MMLファイルが書き込み不可であれば警告（エラーにはしない）
+		$ErrMsg = "現在、読み取り専用でMMLファイルを開いています。";
+		call _DEBUG "【警告】初期処理：" + $ErrMsg;
+		message $ErrMsg, $MacName, 0x30;
+	}
 
 	// MMLファイル名からファイル名のベースを作成（新規作成であれば長さ０）
 	$BaseName = leftstr( basename2, strlen( basename2 ) - strlen( $FileType ) );
+
+	// 一時ファイル用のテキストを作成
+	call _SetMmlTxt;
+
+
+	// ========== 各種タグの存在チェック ==========
+	// driverタグチェック
+	call _DEBUG "driverタグチェック：$Tag_Driver=" + $Tag_Driver;
+	call _GetMmlTag $Tag_Driver, linecount2;
+	$TagSts_Driver = $$return;
+	if( 0 < strlen($TagSts_Driver) )
+	{
+		// タグの再編集用に検出した位置を記憶しておく
+		#DriverTagLNo = #FoundLineNo;
+
+		// ドライバ名を取得
+		$DriverName = $TagSts_Driver;
+
+		// ドライバタグのパラメータが空ならドライバ選択メニューを表示
+		if( " " == $DriverName )
+		{
+			// MMLファイルが書き込み可能であれば編集可
+			if( (!readonly)&&(!browsemode) )
+			{
+				menu
+					"【ドライバの選択】",
+					"\x01",
+					"#driver " + $DrvNameLst[0] + "(&0)　\t" + "MUCOM88 1.7（デフォルト）",
+					"#driver " + $DrvNameLst[1] + "(&1)　\t" + "MUCOM88 1.5",
+					"#driver " + $DrvNameLst[2] + "(&2)　\t" + "MUCOM88em（メモリ拡張版）",
+					"#driver " + $DrvNameLst[3] + "(&3)　\t" + "mucomDotNETによるコンパイルと演奏";
+
+				#Ret = result;
+				if( 1 == #Ret ) #Ret = 3; // キャプションが選択されたらデフォルト
+
+				if( ((3 <= #Ret)&&(#Ret <= 6)) ||(1 == #Ret) )
+				{
+					$DriverName = $DrvNameLst[#Ret - 3];
+					call _EditTag $Tag_Driver, $DriverName, #DriverTagLNo;
+
+					// ドライバタグを編集したら一時ファイル用のテキストを再作成
+					call _SetMmlTxt;
+					call _DEBUG "【ドライバ選択（MENU）】：$DriverName = [" + $DriverName + "]";
+				}
+			}
+		}
+		else
+		{
+			// ドライバ選択タグの正当性チェック
+			#i = 0;
+			#Sts = false;
+			while( #i < #$DrvNameNum )
+			{
+				if( $DriverName == $DrvNameLst[#i] )
+				{
+					#Sts = true;
+					call _DEBUG "【ドライバ選択（TAG）】：$DriverName = [" + $DriverName + "]";
+					break;
+				}
+
+				#i = #i + 1;
+			}
+
+			// 不明なドライバが記述されている場合は警告
+			if( false == #Sts )
+			{
+				$ErrMsg = "タグ " + $Tag_Driver + " に記述されている \"" + $DriverName + "\" は不明なドライバ名です。";
+				call _DEBUG "【警告】ドライバ選択：" + $ErrMsg;
+				message $ErrMsg, $MacName, 0x30;
+			}
+		}
+	}
 
 	// voiceタグチェック
 	call _DEBUG "voiceタグチェック：$Tag_Voice=" + $Tag_Voice;
@@ -547,45 +620,21 @@
 			goto END;
 		}
 
-		// パラメータが変化していて、かつ書き込み可能であれば出力時間タグの再編集
+		// パラメータが変化していて、かつMMLファイルが書き込み可能であれば出力時間タグの再編集
 		if( $FileTimeStr != $TagSts_OutTime )
 		{
-			if( (!readonly)&&(!browsemode) )
-			{
-				call _EditTag $Tag_OutTime, $FileTimeStr, #TimeTagLNo;
-			}
-			else
-			{
-				// 書き込み禁止の警告
-				$ErrMsg = "\"" + basename2 + "\" は書き込み禁止です。";
-				call _DEBUG "[ファイル出力モード] 【エラー】タグ編集：" + $ErrMsg;
-				message $ErrMsg, $MacName, 0x30;
-			}
+			if( (!readonly)&&(!browsemode) ) call _EditTag $Tag_OutTime, $FileTimeStr, #TimeTagLNo;
+
 		}
 
 		// ファイル出力モード終了
 		call _DEBUG "[ファイル出力モード] 終了";
 	}
 
-	// パラメータが変化していて、かつ書き込み可能であればミュートタグの再編集
+	// パラメータが変化していて、かつMMLファイルが書き込み可能であればミュートタグの再編集
 	if( $TagSts_Mute != $MuteEditStr )
 	{
-		if( (!readonly)&&(!browsemode) )
-		{
-			call _EditTag $Tag_Mute, $MuteEditStr, #MuteTagLNo;
-		}
-		else
-		{
-			// ファイル出力モードでなければ警告（二重警告を回避）
-			if( 0 == strlen($Opt_FileOut) )
-			{
-				// 書き込み禁止の警告
-				$ErrMsg = "\"" + basename2 + "\" は書き込み禁止です。";
-				call _DEBUG "[演奏モード] 【警告】タグ編集：" + $ErrMsg;
-				message $ErrMsg, $MacName, 0x30;
-				goto END;
-			}
-		}
+		if( (!readonly)&&(!browsemode) ) call _EditTag $Tag_Mute, $MuteEditStr, #MuteTagLNo;
 	}
 
 	END:
@@ -806,6 +855,37 @@ _ExcMucom:
 	return;
 }
 
+//****************************************
+//   一時ファイル用にMMLを丸コピーする
+//
+//  call _SetMmlTxt;
+//
+// 戻り値：
+//         ※グローバル変数 $MML_Txt
+//****************************************
+_SetMmlTxt:
+{
+	//------------------------------
+	// 一時ファイル作成の準備
+	//------------------------------
+	// カーソルの現在位置を保存
+	##Cr_X = x;
+	##Cr_Y = y;
+
+	// ファイル内のテキストを丸コピー
+	gofiletop;
+	##Top_X = x;
+	##Top_Y = y;
+	gofileend;
+	##End_X = x;
+	##End_Y = y;
+	$MML_Txt = gettext( ##Top_X, ##Top_Y, ##End_X, ##End_Y );
+
+	// カーソルを復帰
+	moveto ##Cr_X, ##Cr_Y;
+
+	return;
+}
 
 //****************************************
 //   MMLタグの検索およびパラメータの取得
