@@ -43,7 +43,7 @@
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
 //           MUCOM88 for Windows 2020/03/15リリース版
-// 更新履歴 : 2020/04/04 Ver 1.08  ドライバ名を動作ログに出力するように修正。
+// 更新履歴 : 2020/05/12 Ver 1.09  半角スペースを含むパスが実行できない不具合に対応。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -67,8 +67,8 @@
 	#DrvNameNum    = 4; // 上記ドライバ名の登録数
 
 
-	// メッセージおよびデバッグ用のマクロ名
-	$MacName = "mucom_MMLplayer.mac";
+	// メッセージおよびデバッグ用のマクロ名およびバージョン
+	$MacName = "mucom_MMLplayer.mac (v1.09)";
 
 
 	// ----------【ユーザ設定項目 ※編集可】----------
@@ -733,7 +733,7 @@ _ComplMML:
 	}
 
 	// -cオプションはコンパイルと同時に演奏するため、 -gオプションで「コンパイルのみ」を指定
-	$$ExcStr = $AppPath + " -o " + $$BinPath + " -g " + $MucPath;
+	$$ExcStr = "\"" + $AppPath + "\"" + " -o " + "\"" + $$BinPath + "\"" + " -g " + "\"" + $MucPath + "\"";
 	call _DEBUG "[_ComplMML] コンパイル実行：" + $$ExcStr;
 	runex $$ExcStr, 1, // ファイル名, 同期フラグ
 			0, "",    // 標準入力フラグ, 標準入力ファイル名
@@ -820,8 +820,12 @@ _ComplMML:
 _ExcMucom:
 {
 	$$OptStr  = $$1;
-	$$BinPath = $$2;
+	$$BinPath = "\"" + $$2 + "\"";
 	$$PrcName = $$3;
+	$$AppPath = "\"" + $AppPath + "\""; // 実行ファイルのパスを「“ ”」で括る
+
+	// リズム音源ファイルのパスを作成（末尾の\は取る）
+	$$RythPath = "\"" + leftstr( $MUCOM88_Dir, strlen($MUCOM88_Dir) -1 ) + "\"";
 
 	// 引数のログ
 	call _DEBUG "[_ExcMucom] パラメータ：$$OptStr=" + $$OptStr + ", $$BinPath=" + $$BinPath + ", $$PrcName=" + $$PrcName;
@@ -838,11 +842,8 @@ _ExcMucom:
 	//--------------------
 	// 実行処理
 	//--------------------
-	// リズム音源ファイルのパスを作成（末尾の\は取る）
-	$$RythPath = leftstr( $MUCOM88_Dir, strlen($MUCOM88_Dir) -1 );
-
 	// MUCOM88にMUBファイルを渡して演奏を開始（rオプションでリズム音源ファイルの場所を指定）
-	$$ExcStr = $AppPath + " " + $$OptStr + $$BinPath + " -r \"" + $$RythPath +"\"";
+	$$ExcStr = $$AppPath + " " + $$OptStr + $$BinPath + " -r " + $$RythPath;
 	call _DEBUG "[_ExcMucom] " + $$PrcName + "実行：" + $$ExcStr;
 	##Start_Tk = tickcount;
 	runsync2 $$ExcStr; // アイコンの状態にしないで待機(sync2)
