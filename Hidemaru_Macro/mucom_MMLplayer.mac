@@ -43,7 +43,7 @@
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
 //           MUCOM88 for Windows 2020/03/15リリース版
-// 更新履歴 : 2020/05/12 Ver 1.09  半角スペースを含むパスが実行できない不具合に対応。
+// 更新履歴 : 2020/05/16 Ver 1.10  コンパイルのエラー時、エラー行へジャンプする機能を実装。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -749,12 +749,22 @@ _ComplMML:
 	#Ret = existfile( $$BinPath );
 	if( false == #Ret )
 	{
-		$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
+		call _JumpErrLine;
+		$$ErrMsg = $$return;
+
+		if( "" ==  $$ErrMsg )
+		{
+			// 不明なエラー
+			$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
+		}
+		else
+		{
+			// MUCOM88側が出力したエラーを表示する
+			$ErrMsg = "MMLのコンパイルに失敗しました。\n\n" + $$ErrMsg;
+		}
 		call _DEBUG "[_ComplMML] 【エラー】一時バイナリファイルなし：" + $ErrMsg;
 		message $ErrMsg, $MacName, 0x10;
 
-		// エラー情報はアウトプット枠に出ているはずなので、そちらへフォーカスを遷移
-		setfocus 5;
 		$$RetSts = "0";
 	}
 	else
@@ -1564,6 +1574,82 @@ _CopyFile:
 	releaseobject ##Obj;
 
 	return;
+}
+
+// ****************************************
+// コンパイルエラーの行にジャンプする
+//
+//  call _JumpErrLine;
+//
+// 戻り値：
+//     MUCOM88が出力したエラーメッセージ
+// ****************************************
+_JumpErrLine:
+{
+	$$RetStr = "";
+
+	// アウトプット枠にフォーカスを移動
+	setfocus 5;
+
+	// アウトプット枠に「すべてコピー」のコマンドを送信
+	loaddll "HmOutputPane.dll";
+	##Hnd = dllfunc( "GetWindowHandle",hidemaruhandle(0) );
+	##Ret = sendmessage( ##Hnd, 0x111, 1013, 0 );
+	freedll;
+
+	// クリップボードからエラー行を検索（試行するのは最大で1024行とする）
+	//call _DEBUG "[_JumpErrLine] エラーの検索を開始";
+	beginclipboardread;
+	##i = 0;
+	$$SeekStr    = "#error ";
+	$$ErrLineStr = "";
+	$$ClpStr     = "dummy";
+
+	while( ($$ClpStr != "") && (##i < 1024) ) 
+	{
+	    $$ClpStr  = getclipboard;
+		##FindPos = strrstr( $$ClpStr, $$SeekStr );
+		if( -1 < ##FindPos )
+		{
+			//call _DEBUG "[_JumpErrLine] エラー行を検出。 $$ClpStr=" + $$ClpStr;
+
+			// エラー行を見つけたらメッセージも取得して終了
+			$$ErrLineStr = $$ClpStr;
+		    $$ErrMsgStr  = getclipboard;
+			$$ClpStr = "";
+		}
+
+	    ##i = ##i + 1;
+	}
+
+	if( "" == $$ErrLineStr )
+	{
+		//message "アウトプット枠でエラー行がみつかりません。";
+		return $$RetStr;
+	}
+
+	// 検出したエラー内容をセット
+	$$RetStr = $$ErrLineStr + "\n" + $$ErrMsgStr;
+
+	// エラー行の行番号のみを抜き出す
+	$$SeekStr    = "in line ";
+	##FindPos = strstr( $$ErrLineStr, $$SeekStr );
+	$$ErrLineNo = midstr( $$ErrLineStr, ##FindPos + strlen($$SeekStr) );
+	$$ErrLineNo = midstr( $$ErrLineNo, 0, strlen($$ErrLineNo) - 1 );
+
+	// エラー行にジャンプして選択状態で強調する
+	##ErrLineNo = val($$ErrLineNo);
+	if( ##ErrLineNo <= linecount2 )
+	{
+		movetolineno 1, ##ErrLineNo; 
+		selectline;
+	}
+	else
+	{
+		// 「A *10 M1」などと記述すると、エラー番号9 行番号 13312 が出力される 20/05/16
+		$$RetStr = $$RetStr + "\n\n（※行番号が異常です。エラー箇所はMMLで使用しているマクロの後方あるいはマクロ内部にあるかもしれません。）";	}
+
+	return $$RetStr;
 }
 
 
