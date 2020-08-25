@@ -43,7 +43,7 @@
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
 //           MUCOM88 for Windows 2020/03/15リリース版
-// 更新履歴 : 2020/05/16 Ver 1.10  コンパイルのエラー時、エラー行へジャンプする機能を実装。
+// 更新履歴 : 2020/08/25 Ver 1.10  MML一覧からタグジャンプして再生できるようにした。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -94,6 +94,10 @@
 
 	//==================================================
 	call _DEBUG "==========【マクロ開始】==========";
+
+	// タグジャンプを試行する（MMLファイルリスト用）
+	#TagJumpFlg = 0;	// 成功すればこのフラグが立つ
+	call _TagJump;
 
 	//------------------------------
 	// コンパイルの準備（初期処理）
@@ -642,6 +646,17 @@
 
 	END:
 
+	// タグジャンプを実行済みであれば、呼び出し元に戻る
+	if( 0 < #TagJumpFlg )
+	{
+		backtagjump;
+		if( yes == result )
+		{
+			// タグジャンプ先のウィンドウを閉じる
+			closehidemaru #PlayWndHdl;
+		}
+	}
+
 	// マクロ終了
 	call _DEBUG "【マクロ終了】";
 
@@ -749,22 +764,12 @@ _ComplMML:
 	#Ret = existfile( $$BinPath );
 	if( false == #Ret )
 	{
-		call _JumpErrLine;
-		$$ErrMsg = $$return;
-
-		if( "" ==  $$ErrMsg )
-		{
-			// 不明なエラー
-			$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
-		}
-		else
-		{
-			// MUCOM88側が出力したエラーを表示する
-			$ErrMsg = "MMLのコンパイルに失敗しました。\n\n" + $$ErrMsg;
-		}
+		$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
 		call _DEBUG "[_ComplMML] 【エラー】一時バイナリファイルなし：" + $ErrMsg;
 		message $ErrMsg, $MacName, 0x10;
 
+		// エラー情報はアウトプット枠に出ているはずなので、そちらへフォーカスを遷移
+		setfocus 5;
 		$$RetSts = "0";
 	}
 	else
@@ -1149,6 +1154,121 @@ _EditTag:
 
 	return;
 }
+
+
+//****************************************
+// MMLファイル名リストから再生
+//
+//  call _TagJump;
+//
+// 戻り値：
+//     なし
+//****************************************
+_TagJump:
+{
+	// タグジャンプのフラグをリセット
+	#TagJumpFlg = 0;
+
+	// 現在行の文字列を取得
+	call _CopyLine;
+	$$LineStr = $$return;
+
+	// 念のためコメントの削除を試行しておく
+	call _ComtTrunc $$LineStr;
+	$$LineStr = $$return;
+
+	// MMLファイルの一覧と思わしき文字列ならタグジャンプを試行
+	if(  -1 < strstr( $$LineStr, ".muc" ) )
+	{
+		tagjump;
+		if( yes == result )
+		{
+			call _DEBUG "[_TagJump] タグジャンプ：$$LineStr=" + $$LineStr;
+			#TagJumpFlg = 1;
+
+			// ジャンプ先のウィンドウハンドルを取得
+			#PlayWndHdl = hidemaruhandle(0);
+		}
+		else
+		{
+			// タグジャンプに失敗したらマクロを終了する
+			$ErrMsg = "MMLファイルへのタグジャンプに失敗しました。";
+			call _DEBUG "[_TagJump] 【エラー】タグジャンプ失敗：" + $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
+	}
+
+	return;
+}
+
+//****************************************
+//   現在行を文字列としてコピー
+//
+//  call _CopyLine;
+//
+//  戻り値：
+//      $$return; 現在行の文字列
+//
+// ※標準関数の copyline はクリップボードへのコピー
+//****************************************
+_CopyLine:
+{
+	// 現在位置を保存
+	##XPos = x; // 横座標
+	##YPos = y; // 縦座標
+
+	// 行頭の位置を取得
+	golinetop2; // 論理行頭
+	##TopXPos   = x;
+	##TopYPos   = y;
+
+	// 行末の位置を取得
+	golineend2; // 論理行頭
+	##EndXPos   = x;
+	##EndYPos   = y;
+
+	// カーソルを現在位置に復帰
+	moveto ##XPos, ##YPos;
+
+	// 現在行をコピー
+	$$RetStr  = gettext( ##TopXPos, ##TopYPos, ##EndXPos, ##EndYPos );
+
+	// 現在行の文字列を返して終了
+	return( $$RetStr );
+}
+
+//****************************************
+//   コメント部分を切り捨てる
+//
+//  call _ComtTrunc $$1;
+//           $$1 コメントを含む文字列
+//
+//  戻り値：
+//      $$return; コメントを取り除いた文字列
+//****************************************
+_ComtTrunc:
+{
+	$$SrcStr = $$1;  // 編集元の文字列
+
+	// コメントを検索
+	##Pos = strstr( $$SrcStr, ";" );
+	if( 0 <= ##Pos )
+	{
+		// コメントが存在するなら、それ以降を切り捨てる
+		$$RetStr = midstr( $$SrcStr, 0, ##Pos );
+	}
+	else
+	{
+		// コメントがなければそのまま返す
+		$$RetStr = $$SrcStr;
+	}
+
+	// 編集結果を返して終了
+	return( $$RetStr );
+
+}
+
 
 //****************************************
 // 前後の余白を削除
@@ -1574,82 +1694,6 @@ _CopyFile:
 	releaseobject ##Obj;
 
 	return;
-}
-
-// ****************************************
-// コンパイルエラーの行にジャンプする
-//
-//  call _JumpErrLine;
-//
-// 戻り値：
-//     MUCOM88が出力したエラーメッセージ
-// ****************************************
-_JumpErrLine:
-{
-	$$RetStr = "";
-
-	// アウトプット枠にフォーカスを移動
-	setfocus 5;
-
-	// アウトプット枠に「すべてコピー」のコマンドを送信
-	loaddll "HmOutputPane.dll";
-	##Hnd = dllfunc( "GetWindowHandle",hidemaruhandle(0) );
-	##Ret = sendmessage( ##Hnd, 0x111, 1013, 0 );
-	freedll;
-
-	// クリップボードからエラー行を検索（試行するのは最大で1024行とする）
-	//call _DEBUG "[_JumpErrLine] エラーの検索を開始";
-	beginclipboardread;
-	##i = 0;
-	$$SeekStr    = "#error ";
-	$$ErrLineStr = "";
-	$$ClpStr     = "dummy";
-
-	while( ($$ClpStr != "") && (##i < 1024) ) 
-	{
-	    $$ClpStr  = getclipboard;
-		##FindPos = strrstr( $$ClpStr, $$SeekStr );
-		if( -1 < ##FindPos )
-		{
-			//call _DEBUG "[_JumpErrLine] エラー行を検出。 $$ClpStr=" + $$ClpStr;
-
-			// エラー行を見つけたらメッセージも取得して終了
-			$$ErrLineStr = $$ClpStr;
-		    $$ErrMsgStr  = getclipboard;
-			$$ClpStr = "";
-		}
-
-	    ##i = ##i + 1;
-	}
-
-	if( "" == $$ErrLineStr )
-	{
-		//message "アウトプット枠でエラー行がみつかりません。";
-		return $$RetStr;
-	}
-
-	// 検出したエラー内容をセット
-	$$RetStr = $$ErrLineStr + "\n" + $$ErrMsgStr;
-
-	// エラー行の行番号のみを抜き出す
-	$$SeekStr    = "in line ";
-	##FindPos = strstr( $$ErrLineStr, $$SeekStr );
-	$$ErrLineNo = midstr( $$ErrLineStr, ##FindPos + strlen($$SeekStr) );
-	$$ErrLineNo = midstr( $$ErrLineNo, 0, strlen($$ErrLineNo) - 1 );
-
-	// エラー行にジャンプして選択状態で強調する
-	##ErrLineNo = val($$ErrLineNo);
-	if( ##ErrLineNo <= linecount2 )
-	{
-		movetolineno 1, ##ErrLineNo; 
-		selectline;
-	}
-	else
-	{
-		// 「A *10 M1」などと記述すると、エラー番号9 行番号 13312 が出力される 20/05/16
-		$$RetStr = $$RetStr + "\n\n（※行番号が異常です。エラー箇所はMMLで使用しているマクロの後方あるいはマクロ内部にあるかもしれません。）";	}
-
-	return $$RetStr;
 }
 
 
