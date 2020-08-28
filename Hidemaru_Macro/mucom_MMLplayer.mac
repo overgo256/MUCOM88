@@ -47,7 +47,8 @@
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
 //           MUCOM88 for Windows 2020/03/15リリース版
-// 更新履歴 : 2020/08/26 Ver 1.10a  タグジャンプに関するログの修正。
+// 更新履歴 : 2020/08/29 Ver 1.12  アウトプット枠からエラー行を取得する機能を追加。
+//                                 一時ファイルの終端にタイムスタンプを挿入するようにした。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -72,7 +73,7 @@
 
 
 	// メッセージおよびデバッグ用のマクロ名およびバージョン
-	$MacName = "mucom_MMLplayer.mac (v1.10a)";
+	$MacName = "mucom_MMLplayer.mac (v1.11)";
 
 
 	// ----------【ユーザ設定項目 ※編集可】----------
@@ -526,6 +527,7 @@
 	newfile; // ファイルオープン
 	setwindowsize 0,0;
 	insert $MML_Txt;
+	insert "\n#compiled " + time + "\n"; // 一時MMLにタイムスタンプを追加
 
 	// ミュートオプション処理
 	if( 0 < strlen($RepKey) )
@@ -770,12 +772,21 @@ _ComplMML:
 	#Ret = existfile( $$BinPath );
 	if( false == #Ret )
 	{
-		$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
+		// エラー情報はアウトプット枠に出ているはずなので、そちらへフォーカスを遷移
+		call _JmpErrLine;
+		$$CplErr = $$return;
+
+		if( 0 < strlen($$CplErr) )
+		{
+			$ErrMsg = "MMLのコンパイルに失敗しました。\n\n[エラー情報]\n" + $$CplErr;
+		}
+		else
+		{
+			$ErrMsg = "MMLのコンパイルに失敗しました。（アウトプット枠の情報を確認してください）";
+		}
+
 		call _DEBUG "[_ComplMML] 【エラー】一時バイナリファイルなし：" + $ErrMsg;
 		message $ErrMsg, $MacName, 0x10;
-
-		// エラー情報はアウトプット枠に出ているはずなので、そちらへフォーカスを遷移
-		setfocus 5;
 		$$RetSts = "0";
 	}
 	else
@@ -1701,6 +1712,84 @@ _CopyFile:
 	releaseobject ##Obj;
 
 	return;
+}
+
+
+// ****************************************
+// アプトプット枠のエラー行にジャンプする
+//
+//  call _JmpErrLine;
+//
+// 戻り値：
+//     取得したエラーメッセージ
+// ****************************************
+_JmpErrLine:
+{
+	$$RetStr = ""; // 戻り値
+
+	// アウトプット枠にフォーカスを移動
+	setfocus 5;
+
+	// アウトプット枠に「すべてコピー」のコマンドを送信
+	loaddll "HmOutputPane.dll";
+	##Hnd = dllfunc( "GetWindowHandle",hidemaruhandle(0) );
+	##Ret = sendmessage( ##Hnd, 0x111, 1013, 0 );
+	freedll;
+
+	// クリップボードからエラー行を検索（試行するのは最大で256行とする）
+	beginclipboardread;
+	##i = 0;
+	$$SeekStr    = "#error ";
+	$$ErrLineStr = "";
+	$$ClpStr     = "dummy";
+	while( ($$ClpStr != "") && (##i < 256) ) 
+	{
+	    $$ClpStr  = getclipboard;
+		##FindPos = strrstr( $$ClpStr, $$SeekStr );
+		if( -1 < ##FindPos )
+		{
+			// エラー行を見つけたらメッセージも取得
+			$$ErrLineStr = $$ClpStr;
+		    $$ErrMsgStr  = getclipboard;
+			$$ClpStr = "";
+			call _DEBUG "[_JmpErrLine] MUCOM88エラーメッセージ：$$ErrMsgStr=" + $$ErrMsgStr;
+		}
+
+	    ##i = ##i + 1;
+	}
+
+	if( "" == $$ErrLineStr )
+	{
+		call _DEBUG "[_JmpErrLine] アウトプット枠でエラー行がみつかりません。";
+	}
+	else
+	{
+		// エラー行の行番号のみを抜き出す
+		$$SeekStr    = "in line ";
+		##FindPos = strstr( $$ErrLineStr, $$SeekStr );
+		$$ErrLineNo = midstr( $$ErrLineStr, ##FindPos + strlen($$SeekStr) );
+		$$ErrLineNo = midstr( $$ErrLineNo, 0, strlen($$ErrLineNo) - 1 );
+
+		// 正常な行番号なら行を移動する
+		##ErrLineNo = val($$ErrLineNo);
+		if(  ##ErrLineNo <= linecount2 )
+		{
+			// エラー行にジャンプして選択状態で強調する
+			movetolineno 1, ##ErrLineNo; 
+			selectline;
+		}
+		else
+		{
+			// ※マクロの記述行の後ろなどにエラー箇所があると5888（0x1700） や 13312（0x3400）などの行番号を返すことがある
+			call _DEBUG "[_JmpErrLine] コンパイラが異常な行番号を返しました。：##ErrLineNo=" + str(##ErrLineNo);
+		}
+
+		// 戻り値用のエラー情報をセット
+		$$RetStr = $$ErrLineStr + "\n" + $$ErrMsgStr;
+	}
+
+	// エラー情報を返して終了
+	return $$RetStr;
 }
 
 
