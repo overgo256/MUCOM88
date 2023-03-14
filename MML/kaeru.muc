@@ -1,0 +1,19 @@
+#title ‚©‚¦‚é‚Ì‰Ìi‚©‚¦‚é‚Ì‡¥j
+#composer *unknown*
+#author @overgo
+#date 2023/03/10(‹à) 00:21:28
+#comment 
+#voice voice.dat
+
+# *1{ l4 cdefedcr }
+# *2{ l4 efgagfer }
+# *3{ l4 [cr]4 }
+# *4{ l8 ccddeefferdr c4r4 }
+
+A t200  @70o4v12 [*1 *2 /*3 *4]2   *4
+B [r1]2 @80o4v13 [*1 /*2 *3 *4]2 > *4
+C [r1]4 @108o4v10 *1 *2  *3 *4   < *4
+D [r1]6 @1o5v15      *1 *2 *3 *4
+E [r1]6 @1o5v10 D-32 *1 *2 *3 *4
+F @10o4v14q4 l16 w11 [r1]2 [ crcr l32 c(c([c]6)2 l16 cccc l32 c(c([c]6)2 ]11 l16 crcrccccc8c8c4
+
