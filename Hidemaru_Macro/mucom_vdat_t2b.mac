@@ -1,0 +1,362 @@
+
+//-------------------------------------------------------------------
+// マクロ名: mucom_vdat_t2b.mac
+// 機能    ：MUCOM88の音色フォーマットをテキスト型からバイナリ型に変換
+// 製作者  ：@overgo
+//
+// 使用方法：テキスト型フォーマットの音色番号が書かれた行で実行。
+//           変換されたバイナリ型のフォーマットはクリップボードに保存される。
+//
+// 動作確認 :Windows10 Home，秀丸エディタ Ver 9.47 64bit Edition
+//           MUCOM88 for Windows 2020/03/15リリース版
+// 更新履歴 : 2026/04/28 Ver 1.00  初版公開
+//-------------------------------------------------------------------
+
+	call _DEBUG "【音色フォーマットの変換を開始。（テキスト→バイナリ）】";
+
+	// テキスト型パラメータのインデックス
+	#TXT_AR = 0;
+	#TXT_DR = 1;
+	#TXT_SR = 2;
+	#TXT_RR = 3;
+	#TXT_SL = 4;
+	#TXT_TL = 5;
+	#TXT_KS = 6;
+	#TXT_ML = 7;
+	#TXT_DT = 8;
+	#TXT_VNAME = 9;
+	#TXT_FB = 0;
+	#TXT_AL = 1;
+
+	// 各スロットをレジスタ順に並べておく
+	#BinOpIdx[0] = 0;
+	#BinOpIdx[1] = 2;
+	#BinOpIdx[2] = 1;
+	#BinOpIdx[3] = 3;
+
+	// メッセージおよびデバッグ用のマクロ名およびバージョン
+	$MacName = "mucom_vdat_t2b.mac (v1.00)";
+
+    //========================================
+    // 音色番号の取得
+    //========================================
+
+	// 音色番号が記述された行を取得
+	#LineNo = y + 1;
+	$Line = getlinetext( #LineNo );
+
+	// 音色指定の記述を簡易チェック
+	#Pos = strstr( $Line, "  @" );
+    if( 0 > #Pos )
+	{
+        $ErrMsg = "音色番号の記述が見つかりません。\n\"@\" がある行でマクロを実行してください。";
+		call _DEBUG $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		endmacro;
+	}
+
+	// "@" の後ろが "%" ならバイナリ型のフォーマットとみなす
+	#Pos = strstr( $Line, "@" );
+	$Chk = midstr( $Line, #Pos + 1, 1 );
+	if( "%" == $Chk )
+	{
+		//$ErrMsg = "テキスト型の音色フォーマットを指定してください。";
+		//call _DEBUG $ErrMsg;
+		//message $ErrMsg, $MacName, 0x10;
+
+		// テキスト→バイナリの変換マクロを呼び出す
+		execmacro "mucom_vdat_b2t.mac";
+
+		// 戻ってきたら終了
+        endmacro;
+	}
+
+	// 音色番号を取得( @は除く )
+	// コメント部分の切り捨て
+	call _DelCmmSub $Line;
+	$VoiceNo = $$return;
+
+	// 前後の余白を削除
+	call _TrmSub $VoiceNo;
+	$VoiceNo = $$return;
+
+	// @から後ろを残す
+	$VoiceNo = midstr( $VoiceNo, 1 );
+	call _DEBUG "音色番号を取得。(" + $VoiceNo + ")";
+
+	// 音色番号の下に並んでいる音色パラメータを構造体に取得
+	#LineNo = #LineNo + 1;
+
+	// FB / AL の取得
+	$Line = getlinetext( #LineNo );
+	call _DelCmmSub $Line;
+	$Line = $$return;
+
+	// Voice構造体の最後の列に入れておく
+	#ParNum = split( $VoiceDat[4], $Line, "," );
+	if( 2 != #ParNum )
+	{
+		$ErrMsg = str( #LineNo ) + "行目、記述されているパラメータ数が異常です。";
+		call _DEBUG $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		endmacro;
+	}
+
+	call _DEBUG $Line;
+
+    //========================================
+    // スロット順にパラメータを取得
+    //========================================
+
+	// AR～DTの取得
+	#Cnt = 0;
+	while( #Cnt < 4 )
+	{
+		#LineNo = #LineNo + 1;
+		$Line = getlinetext( #LineNo );
+		call _DelCmmSub $Line;
+		$Line = $$return;
+		
+		#ParNum = split( $VoiceDat[#Cnt], $Line, "," );
+		if( #ParNum < 9 )
+		{
+			$ErrMsg = str( #LineNo ) + "行目、記述されているパラメータ数が異常です。("+ str(#ParNum) +")";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
+	
+		#Cnt = #Cnt + 1;
+	}
+
+	call _DEBUG "音色パラメータを取得しました。";
+	
+	// 音色名を作成
+	$VcName = $VoiceDat[3][#TXT_VNAME];
+	if( 0 < strlen( $VcName ) )
+	{
+	    $VcName = strreplace( $VcName, "\"", "" );
+
+		// 前後の余白を削除
+		call _TrmSub $VcName;
+		$VcName = $$return;
+		// ダブルクォーテーションも削る
+	    $VcName = " ;" + strreplace( $VcName, "\"", "" );
+
+		call _DEBUG "音色名を取得。(" + $VcName + ")";
+	}
+
+	// 音色番号と音色名を結合
+	$BinDat = "  " + "@%" + $VoiceNo + $VcName + "\n";
+
+	//========================================
+	// 各パラメータをバイナリ型に変換していく
+	//========================================
+
+	// DT/ML
+	#Cnt = 0;
+	while( #Cnt < 4 )
+	{
+		#DtMl[#Cnt] = ( val( $VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_DT] ) * 16 )
+					  + val( $VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_ML] );
+		#Cnt = #Cnt + 1;
+	}
+
+	$DtMl = sprintf( "$%03X,$%03X,$%03X,$%03X", #DtMl[0],#DtMl[1],#DtMl[2],#DtMl[3] );
+	$BinDat = $BinDat + "  " + $DtMl + "\n";
+
+	// TL
+	#Cnt = 0;
+	while( #Cnt < 4 )
+	{
+		#Tl[#Cnt] = val($VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_TL]);
+		#Cnt = #Cnt + 1;
+	}
+
+	$Tl = sprintf( "$%03X,$%03X,$%03X,$%03X", #Tl[0],#Tl[1],#Tl[2],#Tl[3] );
+	$BinDat = $BinDat + "  " + $Tl + "\n";
+
+	// KS/AR
+	#Cnt = 0;
+	while( #Cnt < 4 )
+	{
+		#KsAr[#Cnt] = ( val( $VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_KS] ) * 64 )
+					  + val( $VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_AR] );
+		#Cnt = #Cnt + 1;
+	}
+	
+	$KsAr = sprintf( "$%03X,$%03X,$%03X,$%03X", #KsAr[0],#KsAr[1],#KsAr[2],#KsAr[3] );
+	$BinDat = $BinDat + "  " + $KsAr + "\n";
+
+	// AMON(OPNA)/DR
+	#Cnt = 0;
+	while( #Cnt < 4 )
+	{
+		#AmDr[#Cnt] = ( 1 * 128 )
+					  + val( $VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_DR] );
+		#Cnt = #Cnt + 1;
+	}
+
+	$AmDr = sprintf( "$%03X,$%03X,$%03X,$%03X", #AmDr[0],#AmDr[1],#AmDr[2],#AmDr[3] );
+	$BinDat = $BinDat + "  " + $AmDr + "\n";
+
+	// SR
+	#Cnt = 0;
+	while( #Cnt < 4 )
+	{
+		#Sr[#Cnt] = val( $VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_SR] );
+		#Cnt = #Cnt + 1;
+	}
+
+	$Sr = sprintf( "$%03X,$%03X,$%03X,$%03X", #Sr[0],#Sr[1],#Sr[2],#Sr[3] );
+	$BinDat = $BinDat + "  " + $Sr + "\n";
+
+	// SL/RR
+	#Cnt = 0;
+	while( #Cnt < 4 )
+	{
+		#SlRr[#Cnt] = ( val( $VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_SL] ) * 16 )
+					  + val( $VoiceDat[ #BinOpIdx[#Cnt] ][#TXT_RR] );
+		#Cnt = #Cnt + 1;
+	}
+
+	$SlRr = sprintf( "$%03X,$%03X,$%03X,$%03X", #SlRr[0],#SlRr[1],#SlRr[2],#SlRr[3] );
+	$BinDat = $BinDat + "  " + $SlRr + "\n";
+
+	// FB/AL
+	#FbAl = ( val( $VoiceDat[4][#TXT_FB] ) *8 )
+		+     val( $VoiceDat[4][#TXT_AL] );
+
+	$FbAl = sprintf( "$%03X", #FbAl );
+	$BinDat = $BinDat + "  " + $FbAl + "\n";
+
+	setclipboard $BinDat;
+	$Msg = "クリップボードにコピーしました。\n\n" + $BinDat;
+	call _DEBUG $Msg;
+	message $Msg;
+
+	call _DEBUG "【マクロ終了】";
+
+	endmacro;
+
+//================================================================================
+
+//****************************************
+//   MMLに記述されたコメント部分を削除
+//
+//  call __DelCmmSub $$1;
+//
+// 引数１：$$1 プレーン化する文字列
+//
+// 戻り値：$$SrcStr
+//     コメントその他を消去した文字列
+//****************************************
+_DelCmmSub:
+{
+	// 入力された文字列を取得
+	$$SrcStr = $$1;
+
+    // コメント部分を消去
+    ##ComtPos = strstr($$SrcStr, ";");
+    if( 0 <= ##ComtPos ) $$SrcStr = midstr($$SrcStr, 0, ##ComtPos);
+
+    // 余計な文字データを削除してプレーン化
+    // ※空白は音色名に影響するため削除しない
+    $$SrcStr = strreplace($$SrcStr, ":",  "" );
+    $$SrcStr = strreplace($$SrcStr, "{",  "" );
+    $$SrcStr = strreplace($$SrcStr, "}",  "" );
+
+	// タブと改行も削除
+    $$SrcStr = strreplace($$SrcStr, "\t", "" );
+    $$SrcStr = strreplace($$SrcStr, "\r", "" );
+    $$SrcStr = strreplace($$SrcStr, "\n", "" );
+    return $$SrcStr;
+}
+
+//****************************************
+// 前後の余白を削除
+//
+//  call _TrmSub $$1;
+//           $$1 前後に余白がある文字列
+//
+// 戻り値：
+//     $$return; 前後の余白を削除後の文字列
+//****************************************
+_TrmSub:
+{
+	$$RetStr = $$1;
+
+	// 前方（左）の余白を削除
+	call _LTrmSub( $$RetStr );
+	$$RetStr = $$return;
+
+	// 後方（右）の余白を削除
+	call _RTrmSub( $$RetStr );
+	$$RetStr = $$return;      // 返値を取得
+
+	// 余白を削除後の文字列を返して終了
+	return( $$RetStr );
+}
+
+//****************************************
+// 前方（左）の余白を削除
+//
+//  call _LTrmSub $$1;
+//           $$1 左に余白がある文字列
+//
+// 戻り値：
+//     $$return; 前方の余白を削除後の文字列
+//****************************************
+_LTrmSub:
+{
+	$$InStr  = $$1; // 入力文字を取得
+	while( ( " " == leftstr( $$InStr , 1 ) )&&( 0 != strlen( $$InStr ) ) )
+	{
+		$$InStr = rightstr( $$InStr , strlen( $$InStr ) - 1 );
+	}
+
+	return( $$InStr );
+}
+
+// ****************************************
+// 後方（右）の余白を削除
+//
+//  call _RTrmSub $$1;
+//           $$1 右に余白がある文字列
+//
+// 戻り値：
+//     $$return; 後方の余白を削除後の文字列
+// ****************************************
+_RTrmSub:
+{
+	$$InStr  = $$1; // 入力文字を取得
+	while( ( " " == rightstr( $$InStr , 1 ) )&&( 0 != strlen( $$InStr ) ) )
+	{
+		$$InStr = leftstr( $$InStr , strlen( $$InStr ) - 1 );
+	}
+
+	return( $$InStr );
+}
+
+
+
+// ****************************************
+// デバッグ情報の出力
+//
+//  call _DEBUG $$1;
+//           $$1 デバッグメッセージ（改行なし）
+//
+// 戻り値：
+//     なし
+// ****************************************
+_DEBUG:
+{
+	debuginfo 2; // 「アウトプット枠にも出力」
+	// [YYYY/MM/DD hh:mm:ss] (macro_filename) message
+	$$Mes = "[" + year + "/" + month + "/" + day + " " + time + "](" + $MacName + ") " + $$1 + "\x0a";
+
+	// OutputDebugStringによるメッセージの送信
+	debuginfo $$Mes;
+	debuginfo 0;
+	return;
+}
