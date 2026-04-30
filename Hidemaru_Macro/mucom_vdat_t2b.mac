@@ -8,11 +8,14 @@
 //           変換されたバイナリ型のフォーマットはクリップボードに保存される。
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 9.47 64bit Edition
-//           MUCOM88 for Windows 2020/03/15リリース版
+//           MUCOM88 for Windows 2026/04/21リリース版
 // 更新履歴 : 2026/04/28 Ver 1.00  初版公開
+//            2026/04/30 Ver 1.01  エラー時のバグ修正。
 //-------------------------------------------------------------------
 
-	call _DEBUG "【音色フォーマットの変換を開始。（テキスト→バイナリ）】";
+	// メッセージおよびデバッグ用のマクロ名およびバージョン
+	$MacName = "mucom_vdat_t2b.mac (v1.00)";
+	call _DEBUG "【マクロ開始】";
 
 	// テキスト型パラメータのインデックス
 	#TXT_AR = 0;
@@ -34,22 +37,22 @@
 	#BinOpIdx[2] = 1;
 	#BinOpIdx[3] = 3;
 
-	// メッセージおよびデバッグ用のマクロ名およびバージョン
-	$MacName = "mucom_vdat_t2b.mac (v1.00)";
-
     //========================================
     // 音色番号の取得
     //========================================
 
 	// 音色番号が記述された行を取得
-	#LineNo = y + 1;
+	#LineNo = lineno;
 	$Line = getlinetext( #LineNo );
 
 	// 音色指定の記述を簡易チェック
 	#Pos = strstr( $Line, "  @" );
     if( 0 > #Pos )
 	{
-        $ErrMsg = "音色番号の記述が見つかりません。\n\"@\" がある行でマクロを実行してください。";
+		// "@" が正しい位置にない場合はエラー終了
+        $ErrMsg = "\"@\" が記述されていないか、または正しい位置（前方に半角スペースが2個必要）ではありません。\n"
+				+ "音色番号が正しく記述されている行でマクロを実行してください。\n"
+				+ "$Line= \"" + $Line + "\"";
 		call _DEBUG $ErrMsg;
 		message $ErrMsg, $MacName, 0x10;
 		endmacro;
@@ -64,12 +67,15 @@
 		//call _DEBUG $ErrMsg;
 		//message $ErrMsg, $MacName, 0x10;
 
-		// テキスト→バイナリの変換マクロを呼び出す
+		// バイナリ→テキストの変換マクロを呼び出す
+		call _DEBUG "バイナリ型の音色フォーマットです。専用のマクロへ処理を移行します。";
 		execmacro "mucom_vdat_b2t.mac";
 
 		// 戻ってきたら終了
         endmacro;
 	}
+
+	call _DEBUG "【音色フォーマットの変換を開始。（テキスト→バイナリ）】";
 
 	// 音色番号を取得( @は除く )
 	// コメント部分の切り捨て
@@ -92,11 +98,21 @@
 	call _DelCmmSub $Line;
 	$Line = $$return;
 
+	// パラメータの記述がなければエラー
+	if( 0 == strlen( $Line ) )
+	{
+		$ErrMsg = str( #LineNo ) + " 行目のパラメータが読み込めません。";
+		call _DEBUG $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		endmacro;
+	}
+
 	// Voice構造体の最後の列に入れておく
 	#ParNum = split( $VoiceDat[4], $Line, "," );
 	if( 2 != #ParNum )
 	{
-		$ErrMsg = str( #LineNo ) + "行目、記述されているパラメータ数が異常です。";
+		$ErrMsg = "[ " + str( #LineNo ) + " 行目]：記述されているパラメータ数が異常です。"
+					"( #ParNum = " + str( #ParNum ) +" )";
 		call _DEBUG $ErrMsg;
 		message $ErrMsg, $MacName, 0x10;
 		endmacro;
@@ -114,13 +130,24 @@
 	{
 		#LineNo = #LineNo + 1;
 		$Line = getlinetext( #LineNo );
+
+		// パラメータの記述がなければエラー
+		if( 0 == strlen( $Line ) )
+		{
+			$ErrMsg = str( #LineNo ) + " 行目のパラメータが読み込めません。";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
+
 		call _DelCmmSub $Line;
 		$Line = $$return;
 		
 		#ParNum = split( $VoiceDat[#Cnt], $Line, "," );
 		if( #ParNum < 9 )
 		{
-			$ErrMsg = str( #LineNo ) + "行目、記述されているパラメータ数が異常です。("+ str(#ParNum) +")";
+			$ErrMsg = str( #LineNo ) + "行目、記述されているパラメータ数が異常です。"
+			"( #ParNum = "+ str(#ParNum) +" )";
 			call _DEBUG $ErrMsg;
 			message $ErrMsg, $MacName, 0x10;
 			endmacro;
@@ -230,8 +257,9 @@
 	$FbAl = sprintf( "$%03X", #FbAl );
 	$BinDat = $BinDat + "  " + $FbAl + "\n";
 
+	// パラメータ構成が完成したらクリップボードに転送してマクロを終了
 	setclipboard $BinDat;
-	$Msg = "クリップボードにコピーしました。\n\n" + $BinDat;
+	$Msg = "バイナリ型の音色フォーマットをクリップボードにコピーしました。\n\n" + $BinDat;
 	call _DEBUG $Msg;
 	message $Msg;
 
