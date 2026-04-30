@@ -7,10 +7,14 @@
 //           変換されたテキスト型のフォーマットはクリップボードに保存される。
 //
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 9.47 64bit Edition
-//           MUCOM88 for Windows 2020/03/15リリース版
+//           MUCOM88 for Windows 2026/04/21リリース版
 // 更新履歴 : 2026/04/28 Ver 1.00  初版公開
+//            2026/04/30 Ver 1.01  エラー時のバグ修正。
 //-------------------------------------------------------------------
-    call _DEBUG "【音色フォーマットの変換を開始。（バイナリ→テキスト）】";
+
+    // メッセージおよびデバッグ用のマクロ名およびバージョン
+    $MacName = "mucom_vdat_b2t.mac (v1.00)";
+	call _DEBUG "【マクロ開始】";
 
     // テキスト型パラメータのインデックス
     #TXT_AR = 0;
@@ -40,20 +44,21 @@
     #BinOpIdx[2] = 1; // op2
     #BinOpIdx[3] = 3; // op4
 
-    // メッセージおよびデバッグ用のマクロ名およびバージョン
-    $MacName = "mucom_vdat_b2t.mac (v1.00)";
-
     // 音色番号が記述された行を取得
-    #LineNo = y + 1;
+    #LineNo = lineno;
     $Line = getlinetext( #LineNo );
 
     // 音色指定の記述を簡易チェック
     #Pos = strstr( $Line, "  @" );
     if( 0 > #Pos )
     {
-        $ErrMsg = "音色番号の記述が見つかりません。\n\"@\" がある行でマクロを実行してください。";
+		// "@" が正しい位置にない場合はエラー終了
+        $ErrMsg = "\"@\" が記述されていないか、または正しい位置（前方に半角スペースが2個必要）ではありません。\n"
+				+ "音色番号が正しく記述されている行でマクロを実行してください。\n"
+				+ "$Line= \"" + $Line + "\"";
         call _DEBUG $ErrMsg;
         message $ErrMsg, $MacName, 0x10;
+        endmacro;
     }
 
     // "@" の後ろが "%" でなければバイナリ型ではない
@@ -66,11 +71,14 @@
         //message $ErrMsg, $MacName, 0x10;
 		
 		// テキスト→バイナリの変換マクロを呼び出す
+		call _DEBUG "バイナリ型の音色フォーマットではありません。テキスト型として処理を続行します。";
 		execmacro "mucom_vdat_t2b.mac";
 
 		// 戻ってきたら終了
         endmacro;
     }
+
+    call _DEBUG "【音色フォーマットの変換を開始。（バイナリ→テキスト）】";
 
     // コメント部分を含めて音色名を取得（";"以降）
     $VcName = "";
@@ -127,11 +135,21 @@
 		$Line = getlinetext( #LineNo );
 		call _DelCmmSub $Line;
 		$Line = $$return;
+
+		// パラメータの記述がなければエラー
+		if( 0 == strlen( $Line ) )
+		{
+			$ErrMsg = str( #LineNo ) + " 行目のパラメータが読み込めません。";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
 		
 		#ParNum = split( $VoiceDat[#Cnt], $Line, "," );
 		if( #ParNum != 4 )
 		{
-			$ErrMsg = str( #LineNo ) + "行目、記述されているパラメータ数が異常です。("+ str() +")";
+			$ErrMsg = "[ " + str( #LineNo ) + " 行目]：記述されているパラメータ数が異常です。\n"
+						 + "( #ParNum = " + str( #ParNum ) +" )";
 			call _DEBUG $ErrMsg;
 			message $ErrMsg, $MacName, 0x10;
 			endmacro;
@@ -147,11 +165,29 @@
 	call _DelCmmSub $Line;
 	$Line = $$return;
 
+	// パラメータの記述がなければエラー
+	if( 0 == strlen( $Line ) )
+	{
+		$ErrMsg = str( #LineNo ) + " 行目のパラメータが読み込めません。";
+		call _DEBUG $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		endmacro;
+	}
+
 	// 16進数から10進数に変換
 	call _Hex2DecSub $Line;
 	#FbAl = ##return;
-	call _DEBUG $Line;
 
+	// パラメータチェック
+	if( #FbAl < 0)
+	{
+		$ErrMsg = "[" + str( #LineNo ) + " 行目]：FB/ALの記述が16進数ではありません。("+ $Line +")";
+		call _DEBUG $ErrMsg;
+		message $ErrMsg, $MacName, 0x10;
+		endmacro;
+	}
+
+	call _DEBUG $Line;
 
 	//========================================
 	// 各パラメータをテキスト型に変換していく
@@ -173,42 +209,95 @@
 	#Cnt = 0;
 	while( #Cnt < 4 )
 	{
+		// DT/ML
 		$Str = $VoiceDat[#BIN_DTML][ #BinOpIdx[#Cnt] ];
 		call _Hex2DecSub $Str;
 		#Val = ##return;
+		if( #Val < 0)
+		{
+			$ErrMsg = str( #LineNo ) + "DT/MLの記述が16進数ではありません。("+ $Str +")";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
+
 		#Dt = (#Val / 16) & 0x07;
 		#Ml = #Val & 0x0F;
 
-
+		// TL
 		$Str = $VoiceDat[#BIN_TL  ][ #BinOpIdx[#Cnt] ];
 		call _Hex2DecSub $Str;
 		#Val = ##return;
+		if( #Val < 0)
+		{
+			$ErrMsg = str( #LineNo ) + "TLの記述が16進数ではありません。("+ $Str +")";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
+
 		#Tl = #Val & 0x7F;
 		
+		// KS/AR
 		$Str = $VoiceDat[#BIN_KSAR][ #BinOpIdx[#Cnt] ];
 		call _Hex2DecSub $Str;
 		#Val = ##return;
+		if( #Val < 0)
+		{
+			$ErrMsg = str( #LineNo ) + "KS/ARの記述が16進数ではありません。("+ $Str +")";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
 
 		#Ks = (#Val / 64) & 0x03;
 		#Ar = #Val & 0x1F;
 		
+		// AM/DR
 		$Str = $VoiceDat[#BIN_AMDR][ #BinOpIdx[#Cnt] ];
 		call _Hex2DecSub $Str;
 		#Val = ##return;
+		if( #Val < 0)
+		{
+			$ErrMsg = str( #LineNo ) + "AM/DRの記述が16進数ではありません。("+ $Str +")";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
+
 		#Am = (#Val / 128) & 0x01;
 		#Dr = #Val & 0x1F;
 
+		// SR
 		$Str = $VoiceDat[#BIN_SR  ][ #BinOpIdx[#Cnt] ];
 		call _Hex2DecSub $Str;
 		#Val = ##return;
+		if( #Val < 0)
+		{
+			$ErrMsg = str( #LineNo ) + "SRの記述が16進数ではありません。("+ $Str +")";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
+
 		#Sr = #Val & 0x1F;
-		
+
+		// SL/RR
 		$Str = $VoiceDat[#BIN_SLRR][ #BinOpIdx[#Cnt] ];
 		call _Hex2DecSub $Str;
 		#Val = ##return;
+		if( #Val < 0)
+		{
+			$ErrMsg = str( #LineNo ) + "SL/RRの記述が16進数ではありません。("+ $Str +")";
+			call _DEBUG $ErrMsg;
+			message $ErrMsg, $MacName, 0x10;
+			endmacro;
+		}
+
 		#Sl = (#Val / 16) & 0x0F;
 		#Rr = #Val & 0x0F;
 		
+		// テキスト型のパラメータ列を作成
 		$Line = sprintf( "  %2d, %2d, %2d, %2d, %2d,%3d, %2d, %2d, %2d",
                             #Ar, #Dr, #Sr, #Rr, #Sl,#Tl, #Ks, #Ml, #Dt );
 
@@ -226,8 +315,9 @@
 		#Cnt = #Cnt + 1;
 	}
 
+	// パラメータ構成が完成したらクリップボードに転送してマクロを終了
     setclipboard $TxtDat;
-    $Msg = "クリップボードにコピーしました。\n\n" + $TxtDat;
+    $Msg = "テキスト型の音色フォーマットをクリップボードにコピーしました。\n\n" + $TxtDat;
     call _DEBUG $Msg;
     message $Msg;
 
@@ -244,20 +334,30 @@
 //           $$1 $付きの16進数の文字列
 //
 // 戻り値：
-//     ##return; 変換後の10進数
+//     ##return; 変換後の10進数（エラー時は -1）
 //****************************************
 _Hex2DecSub:
 {
 	// 前後の余白を削除
 	call _TrmSub $$1;
-	 $$HexStr = $$return;
+	$$HexStr = $$return;
 
-	// 接頭辞を "0x" に変更
-    $$HexStr = strreplace($$HexStr, "$", "" );
-	$$HexStr = "0x" + $$HexStr;
+	// y余白を削除
+    $$HexStr = strreplace($$HexStr, " ", "" );
+	if( "$" != leftstr( $$HexStr, 1 )  )
+	{
+		// 先頭に "$" がない場合は強制的に-1を返す
+		##Val = -1;
+	}
+	else
+	{
+		// 接頭辞を "$"→"0x" に変更
+	    $$HexStr = strreplace($$HexStr, "$", "0x" );
 
-	// 10進数に変換
-	##Val = val( $$HexStr );
+		// 10進数に変換
+		##Val = val( $$HexStr );
+	}
+
     return( ##Val );
 }
 
