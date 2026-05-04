@@ -22,10 +22,11 @@
 // 更新履歴 : 2026/04/28 Ver 1.00  初版公開
 //            2026/04/30 Ver 1.01  エラー時のバグ修正。
 //            2026/05/03 Ver 1.02  パラメータの範囲チェックを追加。
+//            2026/05/04 Ver 1.02a 範囲チェックのバグを修正。
 //-------------------------------------------------------------------
 
 	// メッセージおよびデバッグ用のマクロ名およびバージョン
-	$MacName = "mucom_vdat_t2b.mac (v1.01)";
+	$MacName = "mucom_vdat_t2b.mac (v1.02a)";
 
 	// 外部マクロ名
 	$ExMacName = "mucom_vdat_b2t.mac";
@@ -148,9 +149,12 @@
 	call _TrmSub $VoiceNo;
 	$VoiceNo = $$return;
 
+	// @から後ろを残す
+	$VoiceNo = midstr( $VoiceNo, 1 );
+
 	// 範囲チェック
 	#Val = val( $VoiceNo );
-	if( (0 > #Val)||( #Val > #TMAX_VNO) )
+	if( (0 > #Val)||( #Val > #TMAX_VNO ) )
 	{
         $ErrMsg = "音色番号の範囲を超えています。(" + $VoiceNo + ")";
         call _DEBUG $ErrMsg;
@@ -159,8 +163,6 @@
         endmacro;
 	}
 
-	// @から後ろを残す
-	$VoiceNo = midstr( $VoiceNo, 1 );
 	call _DEBUG "音色番号を取得。(" + $VoiceNo + ")";
 
 	//----------------------------------------
@@ -227,7 +229,7 @@
 		// 範囲チェック
 		if( #VcLen > #TMAX_VNAME )
 		{
-	        $ErrMsg = "音色番号の範囲を超えています。(" + $VoiceNo + ")";
+	        $ErrMsg = "音色名が長すぎます。(" + $VcName + ")";
 	        call _DEBUG $ErrMsg;
 	        message $ErrMsg, $MacName, 0x10;
 		    call _DEBUG "【マクロをエラー終了】";
@@ -400,9 +402,9 @@ _Chk_PrmRangeSub:
 	$$PName  = $$3;
 
 	// 範囲外の場合はエラーとし、強制終了
-	if( ( ##Val > ##MaxVal )||( 0 > ##Val ) )
+	if( ( ##ChkPrm > ##MaxVal )||( 0 > ##ChkPrm ) )
 	{
-        $ErrMsg = $ErrOp + $$PName + "の範囲を超えています。(" + $PStr + ")";
+        $ErrMsg = $ErrOp + $$PName + "の範囲を超えています。(" + str( ##ChkPrm ) + ")";
         call _DEBUG $ErrMsg;
         message $ErrMsg, $MacName, 0x10;
 	    call _DEBUG "【マクロをエラー終了】";
