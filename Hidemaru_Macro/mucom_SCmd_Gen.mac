@@ -5,8 +5,10 @@
 //
 // 使用方法： 
 // ① 「c e g a+」というように４音を半角スペース区切りで記述。
-// ② 範囲選択して本マクロを実行。
-// ③ 作成したSコマンド及びyDMコマンドがクリップボードにコピーされる。
+// ② オプションで直後に [ ] の中にDTを半角スペース区切りで指定可。
+//        例：c e g a+ [0 1 2 -3] （-3～3 ／ 0～7 に対応）
+// ③ 範囲選択して本マクロを実行。
+// ④ 作成したSコマンド及びyDMコマンドがクリップボードにコピーされる。
 //
 // 上記の実行結果：yDM,4,4 yDM,3,4 yDM,1,5 yDM,2,6 S0,161,121,117 o3 c
 //
@@ -18,44 +20,92 @@
 // 動作確認 :Windows10 Home，秀丸エディタ Ver 9.53 64bit Edition
 //           MUCOM88 for Windows 2026/04/21リリース版
 // 更新履歴 : 2026/05/08 Ver 1.00  初版公開
+//            2026/05/10 Ver 1.01  オプションでDT値の指定をできるようした
 // 
 //-------------------------------------------------------------------
 
 // メッセージおよびデバッグ用のマクロ名およびバージョン
-$MacName = "mucom_SCmd_Gen.mac (v1.00)";
+$MacName = "mucom_SCmd_Gen.mac (v1.01)";
 
 // 音名／F-Numテーブル
-$Note[0]="c";   #FNum[0]=618;
-$Note[1]="c+";  #FNum[1]=655;
-$Note[2]="d";   #FNum[2]=694;
-$Note[3]="d+";  #FNum[3]=735;
-$Note[4]="e";   #FNum[4]=779;
-$Note[5]="f";   #FNum[5]=825;
-$Note[6]="f+";  #FNum[6]=874;
-$Note[7]="g";   #FNum[7]=924;
-$Note[8]="g+";  #FNum[8]=981;
-$Note[9]="a";   #FNum[9]=1040;
-$Note[10]="a+"; #FNum[10]=1102;
-$Note[11]="b";  #FNum[11]=1167;
+$Note[0]  = "c";    #FNum[0]  = 618;
+$Note[1]  = "c+";   #FNum[1]  = 655;
+$Note[2]  = "d";    #FNum[2]  = 694;
+$Note[3]  = "d+";   #FNum[3]  = 735;
+$Note[4]  = "e";    #FNum[4]  = 779;
+$Note[5]  = "f";    #FNum[5]  = 825;
+$Note[6]  = "f+";   #FNum[6]  = 874;
+$Note[7]  = "g";    #FNum[7]  = 924;
+$Note[8]  = "g+";   #FNum[8]  = 981;
+$Note[9]  = "a";    #FNum[9]  = 1040;
+$Note[10] = "a+";   #FNum[10] = 1102;
+$Note[11] = "b";    #FNum[11] = 1167;
 
 	call _DEBUG "【マクロ開始】";
 
+	//------------------------------
 	// 範囲選択でテキスト取得
+	//------------------------------
 	$InpTxt = getselectedtext();
-	if( $InpTxt == "" )
-	{
-		$ErrMes = "テキストを選択してください。";
-		call _DEBUG $ErrMes;
-        message $ErrMsg, $MacName, 0x10;
-	    call _DEBUG "【マクロをエラー終了】";
-		endmacro;
-	}
+
+	// 未選択ならエラー終了
+	if( $InpTxt == "" ) call _ErrExit "テキストを選択してください。";
 
 	// テキストをクリーンナップ
 	call _CleanTxtSub $InpTxt;
 	$InpTxt = $$return;
 
+	//------------------------------
+	// DT指定オプションを検索
+	//------------------------------
+	#Pos = strstr( $InpTxt, "[");
+	if( -1 < #Pos )
+	{
+		// オプション指定を切り離す
+		$DT_Str = midstr( $InpTxt, #Pos );
+		$InpTxt = midstr( $InpTxt, 0, #Pos );
+
+		// 閉じカッコも確認
+		#Pos = strstr( $DT_Str, "]");
+		if( -1 < #Pos )
+		{
+			// カッコの中身を取り出す
+			$DT_Str = midstr( $DT_Str, 1, #Pos - 1 );
+
+			// 前後の余白を取り除く
+			call _TrmSub $DT_Str;
+			$DT_Str = $$return;
+
+			// 半角スペースで分割
+			#cnt = split( $DT_PrmStr, $DT_Str, " " );
+
+			#i = 0;
+			// 4つの要素を評価していく
+			while( ( #i < #cnt )&&( #i < 4 ) )
+			{
+				#Val = val( $DT_PrmStr[#i] );
+
+				// 範囲外ならエラー終了
+				if( #Val < -3 || #Val > 7 ) call _ErrExit "DTの値 '" + str(#Val) + "' が範囲外です。（-3～7）";
+
+				// マイナス値を unsigned に変換
+				if( #Val < 0 ) #Val = ( #Val * -1 ) + 4;
+
+				// DT値を5ビット目上位3ビットにセット
+				// ×□□□■■■■ DT/ML max:0x7F
+				#DT_Prm[#i] = #Val * 0x10;
+
+				#i = #i + 1;
+			}
+
+		    call _DEBUG "DTオプションを取得 [" + $DT_Str + "]";
+		}
+	}
+
+
+	//------------------------------
 	// 黒鍵の変換処理
+	//------------------------------
 	$InpTxt = strreplace( $InpTxt, "d-", "c+" );
 	$InpTxt = strreplace( $InpTxt, "e-", "d+" );
 	$InpTxt = strreplace( $InpTxt, "g-", "f+" );
@@ -67,7 +117,9 @@ $Note[11]="b";  #FNum[11]=1167;
 	// スペース区切りで分割して $Raw_Notes に格納
 	#cnt = split( $Raw_Notes, $InpTxt, " " );
 
-	// --- 音名解析ループ ---
+	//------------------------------
+	// 音名解析ループ
+	//------------------------------
 	#NotePtr = 0;
 	#Cur_Oct  = 0;
 	#i = 0;
@@ -109,14 +161,9 @@ $Note[11]="b";  #FNum[11]=1167;
 
 			#j = #j + 1;
 		}
-		if( #Found_FNum == 0 )
-		{
-			$ErrMes = "音名 '" + $n + "' が不明です。";
-			call _DEBUG $ErrMes;
-	        message $ErrMsg, $MacName, 0x10;
-		    call _DEBUG "【マクロをエラー終了】";
-			endmacro;
-		}
+
+		// 音名の記述がなければエラー終了
+		if( #Found_FNum == 0 ) call _ErrExit "音名 '" + $n + "' が不明です。";
 
 		// F-Num計算（累積オクターブで2のべき乗倍）
 		#shift_val = 1;
@@ -147,30 +194,19 @@ LOOP_END:
 		#i = #i + 0;
 	}
 
-	// 有効な要素がなかった場合は終了
-	if (#NotePtr == 0)
-	{
-		$ErrMes = "有効な音名が見つかりませんでした。";
-		call _DEBUG $ErrMes;
-        message $ErrMsg, $MacName, 0x10;
-	    call _DEBUG "【マクロをエラー終了】";
-		endmacro;
-	}
+	// 有効な要素がなかった場合はエラー終了
+	if (#NotePtr == 0) call _ErrExit "有効な音名が見つかりませんでした。";
 
-	// --- パラメータ探索 ---
+	//------------------------------
+	// パラメータ探索
+	//------------------------------
 	call _DEBUG "パラメータ探索を開始。 [#NotePtr=" + str( #NotePtr ) + "]";
 
 	// 基音のF-Numをセット
 	#Base_FNum = #Target_FNum[0];
-	if (#Base_FNum == 0)
-	{
-		// コーディングミス
-		$ErrMes = "F-Numberを取得できませんでした。";
-		call _DEBUG $ErrMes;
-        message $ErrMsg, $MacName, 0x10;
-	    call _DEBUG "【マクロをエラー終了】";
-		endmacro;
-	}
+
+	// F-Numの中身がなければコーディングミス（エラー終了）
+	if (#Base_FNum == 0) call _ErrExit "【コーディングミス】F-Numberを取得できませんでした。";
 
 	// ４つの要素を探索
 	#Idx = 1;
@@ -207,8 +243,9 @@ LOOP_END:
 						if( #err < 0 ) #err = -#err;
 						if( #err < #min_err )
 						{
+							// ML値をセット（オプションのDT値も加算）
 							#min_err = #err;
-							#Output_ML[#Idx] = #m;
+							#Output_ML[#Idx] = #m + #DT_Prm[#Idx];
 							#Output_DT[#Idx] = #s_raw;
 						}
 					}
@@ -220,14 +257,17 @@ LOOP_END:
 		#Idx = #Idx + 1;
 	}
 
+
+	//------------------------------
 	// 出力文字列を生成
+	//------------------------------
 	$Base_Note = $Raw_Notes[0];
 
 	// OP4=ML4 o3 を基音とする
 	$PrintParm = "yDM,4,4 yDM,3,%d yDM,1,%d yDM,2,%d S0,%d,%d,%d o3 %s";
 	$res = sprintf( $PrintParm,
 					#Output_ML[1], #Output_ML[2], #Output_ML[3],
-					#Output_DT[1],  #Output_DT[2],	#Output_DT[3], 
+					#Output_DT[1], #Output_DT[2], #Output_DT[3],
 					$Base_Note );
 
 	setclipboard $res;
@@ -254,34 +294,73 @@ LOOP_END:
 //	   $$return; クリーンナップした文字列
 //****************************************
 _CleanTxtSub:
-
-$$Targ = $$1;
-
-// 処理に邪魔なデータを取り除く
-$$Targ = strreplace( $$Targ, "\t", "" );
-$$Targ = strreplace( $$Targ, "\r", "" );
-$$Targ = strreplace( $$Targ, "\n", "" );
-
-// 無駄な空白を一括して取り除く
-while( 1 )
 {
-	$Ret = strreplace( $$Targ, "  ", " " );
-	if( $Ret == $$Targ ) break;
-	$$Targ = $Ret;
+	$$Targ = $$1;
+
+	// 処理に邪魔なデータを取り除く
+	$$Targ = strreplace( $$Targ, "\t", "" );
+	$$Targ = strreplace( $$Targ, "\r", "" );
+	$$Targ = strreplace( $$Targ, "\n", "" );
+
+	// 無駄な空白を一括して取り除く
+	while( 1 )
+	{
+		$Ret = strreplace( $$Targ, "  ", " " );
+		if( $Ret == $$Targ ) break;
+		$$Targ = $Ret;
+	}
+
+	// 前後の余白を取り除く
+	call _TrmSub $$Targ;
+	$$Targ = $$return;
+
+	return ( $$Targ );
 }
 
-// 左側（前方）の余白を取り除く
-while( ( " " == leftstr( $$Targ , 1 ) )&&( 0 != strlen( $$Targ ) ) )
+//****************************************
+// 前後の余白を削除
+//
+//  call _TrmSub $$1;
+//           $$1 前後に余白がある文字列
+//
+// 戻り値：
+//     $$return 前後の余白を削除後の文字列
+//****************************************
+_TrmSub:
 {
-	$$Targ = rightstr( $$Targ , strlen( $$Targ ) - 1 );
-}
-// 右側（後方）の余白を取り除く
-while( ( " " == rightstr( $$Targ , 1 ) )&&( 0 != strlen( $$Targ ) ) )
-{
-	$$Targ = leftstr( $$Targ , strlen( $$Targ ) - 1 );
+	$RetStr = $$1;
+
+	// 左側（前方）の余白を取り除く
+	while( ( " " == leftstr( $RetStr , 1 ) )&&( 0 != strlen( $RetStr ) ) )
+	{
+		$RetStr = rightstr( $RetStr , strlen( $RetStr ) - 1 );
+	}
+	// 右側（後方）の余白を取り除く
+	while( ( " " == rightstr( $RetStr , 1 ) )&&( 0 != strlen( $RetStr ) ) )
+	{
+		$RetStr = leftstr( $RetStr , strlen( $RetStr ) - 1 );
+	}
+
+	// 余白を削除後した文字列を返して終了
+	return( $RetStr );
 }
 
-return ( $$Targ );
+//****************************************
+// エラーメッセージを表示してマクロを終了
+//
+//  call _ErrExit $$1;
+//           $$1 エラーメッセージ
+//****************************************
+_ErrExit:
+{
+    $ErrMsg = $$1;
+    call _DEBUG $ErrMsg;
+    call _DEBUG "【マクロをエラー終了】";
+
+	// アイコンは「中止（赤×）」
+    message $ErrMsg, $MacName, 0x10;
+    endmacro;
+}
 
 // ****************************************
 // デバッグ情報の出力
