@@ -45,10 +45,28 @@
 //               ①秀丸エディタのgrep検索等でMMLファイルの一覧（プレイリスト）を作成。
 //               ②MMLファイル一覧のファイル名にカーソルを合わせて本マクロを実行。
 //
-// 動作確認 :Windows10 Home，秀丸エディタ Ver 8.88 64bit統合版
+//      動画作成：
+//               WAVファイル出力と併用して、動画作成ソフトffmpegでSNS向けの動画を作成できる。
+//
+//               ①公式サイトのリンクからダウンロード  https://www.ffmpeg.org/download.html
+//               ②ユーザの環境変数 ffmpeg を登録して ffmpeg\bin へのパスを通しておく
+//               ③バッチファイル（本マクロ最下部のコード）_conv.bat を ffmpeg\bin の中へ設置。
+//               ④ #time タグでWVファイルを作成時に動作作成を選択。
+//               ⑤ "ビデオ\ffmpeg" にmp4ファイルが #title タグの内容で出力される。
+//
+//      カウント分析：
+//               コンパイル後の実際のクロック数「全体／ループ」を分析し、Cコマンドの値を元に
+//               小節数および他トラックとの差異（最大値と比較）を分析して表示する。
+//               未使用のトラックは対象外として「 *** 」を表示。
+//
+//
+// 動作確認 :Windows10 Home，秀丸エディタ Ver 9.53 浮動小数点数 64bit版
 //           MUCOM88 for Windows 2020/03/15リリース版
 // 更新履歴 : 2020/08/29 Ver 1.12  アウトプット枠からエラー行を取得する機能を追加。
 //                                 一時ファイルの終端にタイムスタンプを挿入するようにした。
+//
+//            2026/05/12 Ver 1.13  ffmpegでの動画作成に対応。
+//                                 アウトプット枠で Total Count／Loop Count を分析するようにした。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -60,6 +78,7 @@
 	$Tag_Pcm     = "#pcm";      // ADPCMファイルタグ
 	$Tag_OutTime = "#time";     // ファイル出力時間
 	$Tag_Driver  = "#driver";   // ドライバ設定
+	$Tag_Title   = "#title";     // タイトル
 	// [独自拡張タグ]
 	$Tag_LogFile = "#logfile";  // VGM/S98出力設定
 	$Tag_Mute    = "#mute";     // ミュート設定
@@ -73,7 +92,7 @@
 
 
 	// メッセージおよびデバッグ用のマクロ名およびバージョン
-	$MacName = "mucom_MMLplayer.mac (v1.11)";
+	$MacName = "mucom_MMLplayer.mac (v1.13)";
 
 
 	// ----------【ユーザ設定項目 ※編集可】----------
@@ -516,6 +535,9 @@
 	//  コンパイル処理
 	//------------------------------
 
+	// コンパイル成功フラグをリセット
+	#CompileOK = 0;
+
 	// 復帰用にMMLファイルのハンドルを保存
 	#MyHdl = hidemaruhandle( 0 );
 
@@ -570,6 +592,9 @@
  	call _ComplMML $TmpMucPath, $BinPath;
 	if( "0" == $$return ) goto END; // エラーなら終了
 
+	// コンパイル成功フラグを立てておく（マクロ終了前に評価）
+	#CompileOK = 1;
+
 	call _DEBUG "[MUCOM88] 一時MMLのコンパイル完了。";
 
 
@@ -611,17 +636,49 @@
 
 			call _DEBUG "[ファイル出力モード] ファイル出力：" + $OutFilePath + " [" + $FileTimeStmp + "] (" + $FileTimeStr + "秒)";
 
-			// WAVファイル出力ならユーザへの問い合わせ
+			// ファイル出力モードならユーザへの問い合わせ
 			if( "WAV" == $DspFType )
 			{
-				$ErrMsg = $OutFilePath + " [" + $FileTimeStmp + "] (" + $FileTimeStr + "秒) を作成しました。\n"
-						+ "ファイルを開きますか？";
-				#Ret = message( $ErrMsg, $MacName,  (0x20|0x04) ); // (MB_ICONQUESTION | MB_YESNO
-				// 「はい」が選択されたら関連付けで開く
-				if( 6 == #Ret )
+				$Msg = $OutFilePath + " [" + $FileTimeStmp + "] (" + $FileTimeStr + "秒) を作成しました。\r\n";
+
+				// ffmpegのパスが通っているなら動画作成の確認
+				$ffmpeg_dir = getenv("ffmpeg");
+				if( 0 < strlen($ffmpeg_dir) )
 				{
-					call _DEBUG "[ファイル出力モード] WAVファイルオープン：" + $OutFilePath;
-					openbyshell $OutFilePath;
+					// 「はい」が選択されたらffmpegのバッチに渡す
+					$Msg = $Msg + "動画ファイルを作成しますか？";
+					#Ret = message( $Msg, $MacName,  (0x20|0x04) ); // (MB_ICONQUESTION | MB_YESNO
+					if( 6 == #Ret )
+					{
+						// タイトルタグを取得
+						call _GetMmlTag $Tag_Title, linecount2;
+						$Title = $$return;
+						// バッチファイル用にシングルクォーテーションをエスケープ
+						if( -1 != strstr( $Title, "'" ) ) $Title = strreplace( $Title, "'", "\\'" );
+
+						// ffmpegの環境変数を元にバッチファイルのフルパスを作成
+						$bat = $ffmpeg_dir + "\\_conv.bat";
+						$cmd = "\"" + $bat + "\"" + " \"" + $OutFilePath + "\" \"" + $Title + "\"";
+
+						call _DEBUG "[ファイル出力モード] ffmpegで動画作成を開始します。  $cmd=：" + $cmd;
+						run $cmd;
+					}
+				}
+				else
+				{
+					// それ以外は出力先の参照を確認
+					$Msg = $Msg + "WAVファイルの場所を開きますか？";
+					#Ret = message( $Msg, $MacName,  (0x20|0x04) ); // (MB_ICONQUESTION | MB_YESNO
+
+					// 「はい」が選択されたらエクスプローラで開く
+					if( 6 == #Ret )
+					{
+						// エクスプローラの起動オプションでファイルを選択状態にする
+						call _DEBUG "[ファイル出力モード] WAVファイルの場所を開きます。 $OutFilePath=：" + $OutFilePath;
+						run "explorer.exe /e,/select," + $OutFilePath; 
+
+						openbyshell $OutFilePath;
+					}
 				}
 			}
 		}
@@ -664,6 +721,9 @@ END:
 			call _DEBUG "バックタグジャンプ処理： タグジャンプ先のウィンドウを終了";
 		}
 	}
+
+	// コンパイル後のカウント数をチェック
+	if( 1 == #CompileOK ) call _ChkMMLCount;
 
 	// マクロ終了
 	call _DEBUG "【マクロ終了】";
@@ -1287,6 +1347,38 @@ _ComtTrunc:
 
 }
 
+//****************************************
+// 文字列の余分なデータを除去する
+//
+//	call _CleanTxtSub $$1;
+//			 $$1 処理対象の文字列
+//
+// 戻り値：
+//	   $$return; クリーンナップした文字列
+//****************************************
+_CleanTxtSub:
+{
+	$$Targ = $$1;
+
+	// 処理に邪魔なデータを取り除く
+	$$Targ = strreplace( $$Targ, "\t", "" );
+	$$Targ = strreplace( $$Targ, "\r", "" );
+	$$Targ = strreplace( $$Targ, "\n", "" );
+
+	// 無駄な空白を一括して取り除く
+	while( 1 )
+	{
+		$Ret = strreplace( $$Targ, "  ", " " );
+		if( $Ret == $$Targ ) break;
+		$$Targ = $Ret;
+	}
+
+	// 前後の余白を取り除く
+	call _TrmSub $$Targ;
+	$$Targ = $$return;
+
+	return ( $$Targ );
+}
 
 //****************************************
 // 前後の余白を削除
@@ -1295,21 +1387,24 @@ _ComtTrunc:
 //           $$1 前後に余白がある文字列
 //
 // 戻り値：
-//     前後の余白を削除後の文字列
+//     $$return 前後の余白を削除後の文字列
 //****************************************
 _TrmSub:
 {
 	$RetStr = $$1;
 
-	// 前方（左）の余白を削除
-	call _LTrmSub( $RetStr );
-	$RetStr = $$return;
+	// 左側（前方）の余白を取り除く
+	while( ( " " == leftstr( $RetStr , 1 ) )&&( 0 != strlen( $RetStr ) ) )
+	{
+		$RetStr = rightstr( $RetStr , strlen( $RetStr ) - 1 );
+	}
+	// 右側（後方）の余白を取り除く
+	while( ( " " == rightstr( $RetStr , 1 ) )&&( 0 != strlen( $RetStr ) ) )
+	{
+		$RetStr = leftstr( $RetStr , strlen( $RetStr ) - 1 );
+	}
 
-	// 後方（右）の余白を削除
-	call _RTrmSub( $RetStr );
-	$RetStr = $$return;      // 返値を取得
-
-	// 余白を削除後の文字列を返して終了
+	// 余白を削除後した文字列を返して終了
 	return( $RetStr );
 }
 
@@ -1792,6 +1887,247 @@ _JmpErrLine:
 	return $$RetStr;
 }
 
+// ****************************************
+// コンパイル後のカウント数をチェック
+//
+//  call _ChkMMLCount;
+//
+// 戻り値：
+//     なし（結果をアウトプット枠に出力する）
+// ****************************************
+_ChkMMLCount:
+{
+    // ── アウトプット枠を全コピー ──
+    setfocus 5;
+    loaddll "HmOutputPane.dll";
+    ##Hnd = dllfunc( "GetWindowHandle", hidemaruhandle(0) );
+    ##Ret = sendmessage( ##Hnd, 0x111, 1013, 0 );
+    freedll;
+
+    // ── クリップボードを全行結合 ──
+    beginclipboardread;
+    $$ClpStr  = "";
+    $$LineStr = "dummy";
+    while( $$LineStr != "" )
+    {
+        $$LineStr = getclipboard;
+        $$ClpStr  = $$ClpStr + $$LineStr + "\n";
+        if( -1 < strstr( $$ClpStr, "[ Loop count" ) ) $$LineStr = "";
+    }
+
+    call _DEBUG "[ChkMMLCount] ClpStr長=" + str( strlen( $$ClpStr ) );
+
+    // ── "[ Total count" を検索 ──
+    ##PosTTC = strstr( $$ClpStr, "[ Total count" );
+    if( -1 == ##PosTTC )
+    {
+        call _DEBUG "[ChkMMLCount] [ Total count ] が見つかりません。";
+        return;
+    }
+
+    // ── "[ Loop count" を検索 ──
+    ##PosLPC = strstr( $$ClpStr, "[ Loop count" );
+    if( -1 == ##PosLPC )
+    {
+        call _DEBUG "[ChkMMLCount] [ Loop count ] が見つかりません。";
+        return;
+    }
+
+	// Loop countのヘッダが見つかっているなら、次の行（データ本体）も読み込む
+    $$LineStr = getclipboard;
+    $$ClpStr  = $$ClpStr + $$LineStr + "\n";
+
+    // ── 各ブロックを切り出し ──
+    $$TTCBlock = midstr( $$ClpStr, ##PosTTC, ##PosLPC - ##PosTTC );
+    $$LPCBlock = midstr( $$ClpStr, ##PosLPC );
+
+    // ── 値行を切り出し（"A:" から改行まで） ──
+
+	// Total Count のテキストをクリーンナップ
+	call _CleanTxtSub $$TTCBlock;
+	$$TTCBlock = $$return;
+
+    ##PosA = strstr( $$TTCBlock, "A:" );
+    $$TTCLine = midstr( $$TTCBlock, ##PosA );
+    ##PosLF = strstr( $$TTCLine, "\n" );
+    if( -1 < ##PosLF ) $$TTCLine = midstr( $$TTCLine, 0, ##PosLF );
+
+	// Loop Count のテキストをクリーンナップ
+	call _CleanTxtSub $$LPCBlock;
+	$$LPCBlock = $$return;
+
+    ##PosA = strstr( $$LPCBlock, "A:" );
+    $$LPCLine = midstr( $$LPCBlock, ##PosA );
+    ##PosLF = strstr( $$LPCLine, "\n" );
+    if( -1 < ##PosLF ) $$LPCLine = midstr( $$LPCLine, 0, ##PosLF );
+
+    // デバッグ用
+    //call _DEBUG "[ChkMMLCount] TTCLine=" + $$TTCLine;
+    //call _DEBUG "[ChkMMLCount] LPCLine=" + $$LPCLine;
+
+    // ── split ──
+    ##TTCCnt = split( $$TTCVals, $$TTCLine, " " );
+    if( 11 != ##TTCCnt )
+    {
+        call _DEBUG "[ChkMMLCount] TTCのパース失敗。要素数=" + str( ##TTCCnt ) + " $$TTCLine=" + $$TTCLine;
+        return;
+    }
+    ##LPCCnt = split( $$LPCVals, $$LPCLine, " " );
+    if( 11 != ##LPCCnt )
+    {
+        call _DEBUG "[ChkMMLCount] LPCのパース失敗。要素数=" + str( ##LPCCnt ) + " $$LPCLine=" + $$LPCLine;
+        return;
+    }
+
+    // ── 数値を抽出・最大最小を算出 ──
+    ##i = 0;
+    ##TTCMax = 0;
+    ##TTCMin = -1;
+    ##LPCMax = 0;
+    ##LPCMin = -1;
+    while( ##i < 11 )
+    {
+        ##PosColon = strstr( $$TTCVals[##i], ":" );
+        ##TTC[##i] = val( midstr( $$TTCVals[##i], ##PosColon + 1 ) );
+        ##PosColon = strstr( $$LPCVals[##i], ":" );
+        ##LPC[##i] = val( midstr( $$LPCVals[##i], ##PosColon + 1 ) );
+
+        if( 0 != ##TTC[##i] )
+        {
+            if( ##TTC[##i] > ##TTCMax ) ##TTCMax = ##TTC[##i];
+            if( ( -1 == ##TTCMin ) || ( ##TTC[##i] < ##TTCMin ) ) ##TTCMin = ##TTC[##i];
+            if( ##LPC[##i] > ##LPCMax ) ##LPCMax = ##LPC[##i];
+            if( ( -1 == ##LPCMin ) || ( ##LPC[##i] < ##LPCMin ) ) ##LPCMin = ##LPC[##i];
+        }
+        ##i = ##i + 1;
+    }
+
+    // ── Cコマンド検索 ──
+    ##ClkPerBar = 128; // デフォルト
+    ##CFound    = 0;
+    ##LineNo    = 1;
+    while( ( 0 == ##CFound ) && ( ##LineNo <= linecount2 ) )
+    {
+        $$Line = gettext( 0, ##LineNo - 1, linelen2( ##LineNo - 1 ), ##LineNo - 1 );
+
+        // タグ行は除外
+        if( "#" == leftstr( $$Line, 1 ) )
+        {
+            ##LineNo = ##LineNo + 1;
+            continue;
+        }
+        // PC88版：' より前を捨てる
+        ##AposPos = strstr( $$Line, "'" );
+        if( -1 < ##AposPos ) $$Line = midstr( $$Line, ##AposPos + 1 );
+
+        // 行頭がトラック名（A～K）なら1文字捨てる
+        $$HeadChr = leftstr( $$Line, 1 );
+        if( ( "A" <= $$HeadChr ) && ( $$HeadChr <= "K" ) ) $$Line = midstr( $$Line, 1 );
+
+        // コメント削除
+        ##SemiPos = strstr( $$Line, ";" );
+        if( -1 < ##SemiPos ) $$Line = midstr( $$Line, 0, ##SemiPos );
+
+        // Cコマンド検索
+        while( 1 )
+        {
+            ##CPos = strstr( $$Line, "C" );
+            if( -1 == ##CPos ) break;
+
+            $$NextChr = midstr( $$Line, ##CPos + 1, 1 );
+            if( ( "0" <= $$NextChr ) && ( $$NextChr <= "9" ) )
+            {
+                $$CValStr = midstr( $$Line, ##CPos + 1 );
+                ##SpPos = strstr( $$CValStr, " " );
+                if( -1 < ##SpPos ) $$CValStr = midstr( $$CValStr, 0, ##SpPos );
+                if( 3 < strlen( $$CValStr ) ) $$CValStr = midstr( $$CValStr, 0, 3 );
+                ##ClkPerBar = val( $$CValStr );
+                if( 0 < ##ClkPerBar )
+                {
+                    ##CFound = 1;
+                    call _DEBUG "[ChkMMLCount] Cコマンド検出：##ClkPerBar=" + str( ##ClkPerBar );
+                    break;
+                }
+            }
+            $$Line = midstr( $$Line, ##CPos + 1 );
+        }
+        ##LineNo = ##LineNo + 1;
+    }
+    if( 0 == ##CFound )
+    {
+        call _DEBUG "[ChkMMLCount] Cコマンドなし。デフォルト128を使用";
+    }
+
+    // ── トラック名リスト ──
+    ##TrkCnt = split( $$Trk, "A,B,C,D,E,F,G,H,I,J,K", "," );
+
+    // ── ログ出力 ──
+    call _DEBUG "[ChkMMLCount] ============ Count Check ============";
+    call _DEBUG "[ChkMMLCount] C/Bar: " + str( ##ClkPerBar ) + "  ( C" + str( ##ClkPerBar ) + " )";
+
+    // ── Total count ──
+    call _DEBUG "[ChkMMLCount] -------- Total count : " + str( ##TTCMax ) + " --------";
+    ##i = 0;
+    while( ##i < 11 )
+    {
+        if( ( 0 == ##TTC[##i] ) && ( 0 == ##LPC[##i] ) )
+        {
+            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " :   ***";
+        }
+        else if( ( 0 == ##TTC[##i] ) && ( 0 != ##LPC[##i] ) )
+        {
+            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " :   *** TTC=0／LPC=" + str( ##LPC[##i] ) + " ★コーディングミス";
+        }
+        else
+        {
+            ##Bar  = ##TTC[##i] / ##ClkPerBar;
+            ##Rem  = ##TTC[##i] - ( ##ClkPerBar * ##Bar );
+            ##Diff = ##TTC[##i] - ##TTCMax;
+            $$DiffStr = "";
+            if( 0 != ##Diff ) $$DiffStr = "  ★ 差分: " + str( ##Diff );
+            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " : "
+                + str( ##TTC[##i] ) + " clk  ( "
+                + str( ##Bar ) + "小節 + " + str( ##Rem ) + " clk )"
+                + $$DiffStr;
+        }
+        ##i = ##i + 1;
+    }
+    if( ##TTCMax == ##TTCMin )
+        call _DEBUG "[ChkMMLCount] ---> 全トラック一致";
+    else
+        call _DEBUG "[ChkMMLCount] ---> ★ 不一致あり ( 差分: " + str( ##TTCMax - ##TTCMin ) + " clk )";
+
+    // ── Loop count ──
+    call _DEBUG "[ChkMMLCount] -------- Loop count  : " + str( ##LPCMax ) + " --------";
+    ##i = 0;
+    while( ##i < 11 )
+    {
+        if( 0 == ##TTC[##i] )
+        {
+            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " :   ***";
+        }
+        else
+        {
+            ##Bar  = ##LPC[##i] / ##ClkPerBar;
+            ##Rem  = ##LPC[##i] - ( ##ClkPerBar * ##Bar );
+            ##Diff = ##LPC[##i] - ##LPCMax;
+            $$DiffStr = "";
+            if( 0 != ##Diff ) $$DiffStr = "  ★ 差分: " + str( ##Diff );
+            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " : "
+                + str( ##LPC[##i] ) + " clk  ( "
+                + str( ##Bar ) + "小節 + " + str( ##Rem ) + " clk )"
+                + $$DiffStr;
+        }
+        ##i = ##i + 1;
+    }
+    if( ##LPCMax == ##LPCMin )
+        call _DEBUG "[ChkMMLCount] ---> 全トラック一致";
+    else
+        call _DEBUG "[ChkMMLCount] ---> ★ 不一致あり ( 差分: " + str( ##LPCMax - ##LPCMin ) + " clk )";
+
+    call _DEBUG "[ChkMMLCount] =======================================";
+    return;
+}
 
 // ****************************************
 // デバッグ情報の出力
@@ -1813,4 +2149,149 @@ _DEBUG:
 	debuginfo 0;
 	return;
 }
+
+/*=====================================================================
+
+
+//---------------------------------------------
+// 動画作成用のバッチ。下記コメント内の
+// コードをテキストファイルにコピーし、
+// _conv.bat にリネームする。
+//---------------------------------------------
+
+
+rem =========== バッチファイルここから ==========
+rem ------------------------------------------------------------
+rem ffmpeg で簡易的な動画を作成するバッチ
+rem ------------------------------------------------------------
+
+@echo off
+setlocal
+
+echo.
+echo ********** 動画ファイル作成の準備中… **********
+echo.
+
+rem ------------------------------------------------------------
+rem ■ ffmpeg のパス確認
+rem ------------------------------------------------------------
+if "%ffmpeg%"=="" (
+    echo [エラー] ユーザー環境変数 ffmpeg が設定されていません。
+    pause
+    exit /b
+)
+
+set "ffmpeg_dir=%ffmpeg%"
+if not exist "%ffmpeg_dir%\ffmpeg.exe" (
+    echo [エラー] 指定されたパスに ffmpeg.exe が見つかりません。
+    pause
+    exit /b
+)
+
+echo ffmpeg path: %ffmpeg_dir%
+
+rem ------------------------------------------------------------
+rem ■ 入力音声ファイル確認
+rem ------------------------------------------------------------
+if "%~1"=="" (
+    echo [エラー] 音声ファイルをドラッグ＆ドロップしてください。
+    pause
+    exit /b
+)
+
+set "audio_file=%~f1"
+set "ext=%~x1"
+
+rem 対応拡張子チェック
+set "valid_ext=.mp3 .wav .m4a .aac .flac .ogg"
+echo %valid_ext% | find /I "%ext%" >nul
+if errorlevel 1 (
+    echo [エラー] 対応する音声ファイルではありません。
+    echo 対応形式: %valid_ext%
+    pause
+    exit /b
+)
+
+rem ------------------------------------------------------------
+rem ■ 固定画像ファイル確認
+rem ------------------------------------------------------------
+set "image_file=%~dp0image.png"
+if not exist "%image_file%" (
+    echo [エラー] 固定画像 image.png が見つかりません。
+    echo バッチファイルと同じフォルダに image.png を置いてください。
+    pause
+    exit /b
+)
+
+rem ------------------------------------------------------------
+rem ■ 出力フォルダ・ファイル設定
+rem ------------------------------------------------------------
+set "output_dir=%USERPROFILE%\Videos\ffmpeg"
+if not exist "%output_dir%" mkdir "%output_dir%"
+
+set "output_file=%output_dir%\%~n1.mp4"
+set "telop_text=%~2"
+
+echo.
+echo =========== 動画ファイルの作成を開始します ===========
+echo 入力画像: %image_file%
+echo 入力音声: %audio_file%
+echo 出力動画: %output_file%
+echo 表示文字: %telop_text%
+echo ==========================================================
+echo.
+
+rem ------------------------------------------------------------
+rem ■ 一時 WAV 変換
+rem ------------------------------------------------------------
+set "temp_wav=%~dp0_bat_temp.wav"
+
+"%ffmpeg_dir%\ffmpeg.exe" -y -i "%audio_file%" -vn "%temp_wav%"
+if not exist "%temp_wav%" (
+    echo [エラー] 音声を WAV に変換できませんでした。
+    pause
+    exit /b
+)
+
+echo 一時 WAV 作成 OK
+echo.
+
+rem ------------------------------------------------------------
+rem ■ 動画作成（強制上書き -y）＋テロップ
+rem ------------------------------------------------------------
+"%ffmpeg_dir%\ffmpeg.exe" -y ^
+ -loop 1 -i "%image_file%" ^
+ -i "%temp_wav%" ^
+ -vf "drawtext=text='%telop_text%':fontcolor=white:fontsize=48:fontfile=C\\:/Windows/Fonts/meiryo.ttc:x=(w-text_w)/2:y=h-100" ^
+ -map 0:v -map 1:a:0 ^
+ -c:v libx264 -tune stillimage ^
+ -c:a aac -b:a 192k -pix_fmt yuv420p -shortest ^
+ "%output_file%"
+
+if errorlevel 1 (
+    echo [エラー] 動画ファイルの作成に失敗しました。
+    del "%temp_wav%" >nul 2>&1
+    pause
+    exit /b
+)
+
+echo.
+echo ********** 動画ファイル作成 OK **********
+echo.
+
+rem ------------------------------------------------------------
+rem ■ 一時ファイル削除
+rem ------------------------------------------------------------
+del "%temp_wav%" >nul 2>&1
+
+echo.
+echo =========== 完了: %output_file% を作成しました ===========
+echo.
+
+pause
+exit /b
+
+rem =========== バッチファイルここまで ==========
+
+=====================================================================*/
 
