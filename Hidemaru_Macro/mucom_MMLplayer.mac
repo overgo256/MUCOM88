@@ -67,6 +67,9 @@
 //
 //            2026/05/12 Ver 1.13  ffmpegでの動画作成に対応。
 //                                 アウトプット枠で Total Count／Loop Count を分析するようにした。
+//
+//            2026/05/12 Ver 1.14  Countの分析結果のアウトプット枠表示を高速化。
+//                                 ループしない曲は Loop Count の分析結果は省略するようにした。
 //-------------------------------------------------------------------
 
 	//==================================================
@@ -1897,6 +1900,8 @@ _JmpErrLine:
 // ****************************************
 _ChkMMLCount:
 {
+    $$Out = ""; // 出力バッファ
+
     // ── アウトプット枠を全コピー ──
     setfocus 5;
     loaddll "HmOutputPane.dll";
@@ -1933,7 +1938,7 @@ _ChkMMLCount:
         return;
     }
 
-	// Loop countのヘッダが見つかっているなら、次の行（データ本体）も読み込む
+    // Loop countのヘッダが見つかっているなら、次の行（データ本体）も読み込む
     $$LineStr = getclipboard;
     $$ClpStr  = $$ClpStr + $$LineStr + "\n";
 
@@ -1943,27 +1948,23 @@ _ChkMMLCount:
 
     // ── 値行を切り出し（"A:" から改行まで） ──
 
-	// Total Count のテキストをクリーンナップ
-	call _CleanTxtSub $$TTCBlock;
-	$$TTCBlock = $$return;
+    // Total Count のテキストをクリーンナップ
+    call _CleanTxtSub $$TTCBlock;
+    $$TTCBlock = $$return;
 
     ##PosA = strstr( $$TTCBlock, "A:" );
     $$TTCLine = midstr( $$TTCBlock, ##PosA );
     ##PosLF = strstr( $$TTCLine, "\n" );
     if( -1 < ##PosLF ) $$TTCLine = midstr( $$TTCLine, 0, ##PosLF );
 
-	// Loop Count のテキストをクリーンナップ
-	call _CleanTxtSub $$LPCBlock;
-	$$LPCBlock = $$return;
+    // Loop Count のテキストをクリーンナップ
+    call _CleanTxtSub $$LPCBlock;
+    $$LPCBlock = $$return;
 
     ##PosA = strstr( $$LPCBlock, "A:" );
     $$LPCLine = midstr( $$LPCBlock, ##PosA );
     ##PosLF = strstr( $$LPCLine, "\n" );
     if( -1 < ##PosLF ) $$LPCLine = midstr( $$LPCLine, 0, ##PosLF );
-
-    // デバッグ用
-    //call _DEBUG "[ChkMMLCount] TTCLine=" + $$TTCLine;
-    //call _DEBUG "[ChkMMLCount] LPCLine=" + $$LPCLine;
 
     // ── split ──
     ##TTCCnt = split( $$TTCVals, $$TTCLine, " " );
@@ -2045,7 +2046,6 @@ _ChkMMLCount:
                 if( 0 < ##ClkPerBar )
                 {
                     ##CFound = 1;
-                    call _DEBUG "[ChkMMLCount] Cコマンド検出：##ClkPerBar=" + str( ##ClkPerBar );
                     break;
                 }
             }
@@ -2053,30 +2053,26 @@ _ChkMMLCount:
         }
         ##LineNo = ##LineNo + 1;
     }
-    if( 0 == ##CFound )
-    {
-        call _DEBUG "[ChkMMLCount] Cコマンドなし。デフォルト128を使用";
-    }
 
     // ── トラック名リスト ──
     ##TrkCnt = split( $$Trk, "A,B,C,D,E,F,G,H,I,J,K", "," );
 
-    // ── ログ出力 ──
-    call _DEBUG "[ChkMMLCount] ============ Count Check ============";
-    call _DEBUG "[ChkMMLCount] C/Bar: " + str( ##ClkPerBar ) + "  ( C" + str( ##ClkPerBar ) + " )";
+    // ── 出力バッファへの組み立て ──
+    $$Out = $$Out + "============ Count Check ============\r\n";
+    $$Out = $$Out + "C/Bar: " + str( ##ClkPerBar ) + "  ( C" + str( ##ClkPerBar ) + " )\r\n";
 
     // ── Total count ──
-    call _DEBUG "[ChkMMLCount] -------- Total count : " + str( ##TTCMax ) + " --------";
+    $$Out = $$Out + "-------- Total count : " + str( ##TTCMax ) + " --------\r\n";
     ##i = 0;
     while( ##i < 11 )
     {
         if( ( 0 == ##TTC[##i] ) && ( 0 == ##LPC[##i] ) )
         {
-            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " :   ***";
+            $$Out = $$Out + "  " + $$Trk[##i] + " :   ***\r\n";
         }
         else if( ( 0 == ##TTC[##i] ) && ( 0 != ##LPC[##i] ) )
         {
-            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " :   *** TTC=0／LPC=" + str( ##LPC[##i] ) + " ★コーディングミス";
+            $$Out = $$Out + "  " + $$Trk[##i] + " :   *** TTC=0／LPC=" + str( ##LPC[##i] ) + " ★コーディングミス\r\n";
         }
         else
         {
@@ -2085,47 +2081,54 @@ _ChkMMLCount:
             ##Diff = ##TTC[##i] - ##TTCMax;
             $$DiffStr = "";
             if( 0 != ##Diff ) $$DiffStr = "  ★ 差分: " + str( ##Diff );
-            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " : "
+            $$Out = $$Out + "  " + $$Trk[##i] + " : "
                 + str( ##TTC[##i] ) + " clk  ( "
                 + str( ##Bar ) + "小節 + " + str( ##Rem ) + " clk )"
-                + $$DiffStr;
+                + $$DiffStr + "\r\n";
         }
         ##i = ##i + 1;
     }
     if( ##TTCMax == ##TTCMin )
-        call _DEBUG "[ChkMMLCount] ---> 全トラック一致";
+        $$Out = $$Out + "---> 全トラック一致\r\n";
     else
-        call _DEBUG "[ChkMMLCount] ---> ★ 不一致あり ( 差分: " + str( ##TTCMax - ##TTCMin ) + " clk )";
+        $$Out = $$Out + "---> ★ 不一致あり ( 差分: " + str( ##TTCMax - ##TTCMin ) + " clk )\r\n";
 
-    // ── Loop count ──
-    call _DEBUG "[ChkMMLCount] -------- Loop count  : " + str( ##LPCMax ) + " --------";
-    ##i = 0;
-    while( ##i < 11 )
+// ── Loop count（LPCMaxが0＝ループなしの場合は出力しない）──
+    if( 0 < ##LPCMax )
     {
-        if( 0 == ##TTC[##i] )
+        $$Out = $$Out + "-------- Loop count  : " + str( ##LPCMax ) + " --------\r\n";
+        ##i = 0;
+        while( ##i < 11 )
         {
-            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " :   ***";
+            if( 0 == ##TTC[##i] )
+            {
+                $$Out = $$Out + "  " + $$Trk[##i] + " :   ***\r\n";
+            }
+            else
+            {
+                ##Bar  = ##LPC[##i] / ##ClkPerBar;
+                ##Rem  = ##LPC[##i] - ( ##ClkPerBar * ##Bar );
+                ##Diff = ##LPC[##i] - ##LPCMax;
+                $$DiffStr = "";
+                if( 0 != ##Diff ) $$DiffStr = "  ★ 差分: " + str( ##Diff );
+                $$Out = $$Out + "  " + $$Trk[##i] + " : "
+                    + str( ##LPC[##i] ) + " clk  ( "
+                    + str( ##Bar ) + "小節 + " + str( ##Rem ) + " clk )"
+                    + $$DiffStr + "\r\n";
+            }
+            ##i = ##i + 1;
         }
+        if( ##LPCMax == ##LPCMin )
+            $$Out = $$Out + "---> 全トラック一致\r\n";
         else
-        {
-            ##Bar  = ##LPC[##i] / ##ClkPerBar;
-            ##Rem  = ##LPC[##i] - ( ##ClkPerBar * ##Bar );
-            ##Diff = ##LPC[##i] - ##LPCMax;
-            $$DiffStr = "";
-            if( 0 != ##Diff ) $$DiffStr = "  ★ 差分: " + str( ##Diff );
-            call _DEBUG "[ChkMMLCount]   " + $$Trk[##i] + " : "
-                + str( ##LPC[##i] ) + " clk  ( "
-                + str( ##Bar ) + "小節 + " + str( ##Rem ) + " clk )"
-                + $$DiffStr;
-        }
-        ##i = ##i + 1;
+            $$Out = $$Out + "---> ★ 不一致あり ( 差分: " + str( ##LPCMax - ##LPCMin ) + " clk )\r\n";
     }
-    if( ##LPCMax == ##LPCMin )
-        call _DEBUG "[ChkMMLCount] ---> 全トラック一致";
-    else
-        call _DEBUG "[ChkMMLCount] ---> ★ 不一致あり ( 差分: " + str( ##LPCMax - ##LPCMin ) + " clk )";
 
-    call _DEBUG "[ChkMMLCount] =======================================";
+    $$Out = $$Out + "=======================================";
+
+    // ── 一括出力 ──
+    call _DEBUG "[ChkMMLCount]\r\n" + $$Out;
+
     return;
 }
 
